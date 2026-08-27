@@ -1,0 +1,69 @@
+{
+  "data": {
+    "$type": "com.linkedin.voyager.identity.profile.Profile",
+    "entityUrn": "urn:li:fsd_profile:demo-person",
+    "publicIdentifier": "demo-person",
+    "firstName": "Demo",
+    "lastName": "Person",
+    "headline": "Principal Engineer at Example Labs",
+    "locationName": "Bengaluru, Karnataka, India",
+    "summary": "I build reliable distributed systems.",
+    "profilePicture": {
+      "displayImageReference": {
+        "vectorImage": {
+          "rootUrl": "https://media.example.test/profile/",
+          "artifacts": [
+            { "width": 100, "fileIdentifyingUrlPathSegment": "small.jpg" },
+            { "width": 800, "fileIdentifyingUrlPathSegment": "large.jpg" }
+          ]
+        }
+      }
+    }
+  },
+  "included": [
+    {
+      "$type": "com.linkedin.voyager.identity.profile.Position",
+      "entityUrn": "urn:li:fsd_profilePosition:1",
+      "title": "Principal Engineer",
+      "companyName": "Example Labs",
+      "companyPublicIdentifier": "example-labs",
+      "employmentType": "Full-time",
+      "locationName": "Bengaluru, India",
+      "description": "Led the platform team.",
+      "timePeriod": { "startDate": { "month": 6, "year": 2022 } }
+    },
+    {
+      "$type": "com.linkedin.voyager.identity.profile.Education",
+      "entityUrn": "urn:li:fsd_profileEducation:1",
+      "schoolName": "Example Institute of Technology",
+      "schoolPublicIdentifier": "example-institute",
+      "degreeName": "Bachelor of Technology",
+      "fieldOfStudy": "Computer Science",
+      "timePeriod": {
+        "startDate": { "year": 2014 },
+        "endDate": { "year": 2018 }
+      }
+    },
+    {
+      "$type": "com.linkedin.voyager.identity.profile.Skill",
+      "entityUrn": "urn:li:fsd_skill:typescript",
+      "name": "TypeScript",
+      "endorsementCount": 42
+    },
+    {
+      "$type": "com.linkedin.voyager.identity.profile.Certification",
+      "entityUrn": "urn:li:fsd_profileCertification:1",
+      "name": "Cloud Architect",
+      "authority": "Example Cloud",
+      "licenseNumber": "CERT-123",
+      "url": "https://credentials.example.test/CERT-123",
+      "timePeriod": { "startDate": { "month": 1, "year": 2024 } }
+    },
+    {
+      "$type": "com.linkedin.voyager.identity.profile.Language",
+      "entityUrn": "urn:li:fsd_profileLanguage:1",
+      "name": "English",
+      "proficiency": "FULL_PROFESSIONAL"
+    }
+  ]
+}
