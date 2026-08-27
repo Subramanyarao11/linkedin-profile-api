@@ -52,7 +52,46 @@ describe("API", () => {
     const app = await buildApp(config, fakeService);
     const response = await app.inject({ method: "GET", url: "/health" });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ status: "ok", linkedInSessionConfigured: false });
+    expect(response.json()).toEqual({
+      status: "ok",
+      linkedInSessionConfigured: false,
+      readinessCheckConfigured: false
+    });
+    await app.close();
+  });
+
+  it("protects the active LinkedIn readiness check with a separate key", async () => {
+    const readyConfig = loadConfig({
+      NODE_ENV: "test",
+      READINESS_KEY: "readiness-secret",
+      LINKEDIN_LI_AT: "synthetic-li-at",
+      LINKEDIN_JSESSIONID: '"ajax:synthetic"'
+    });
+    const probe = {
+      check: vi.fn().mockResolvedValue({
+        authenticated: true,
+        checkedAt: "2026-08-27T00:00:00.000Z",
+        durationMs: 12,
+        reason: null,
+        cache: "miss"
+      })
+    };
+    const app = await buildApp(readyConfig, fakeService, probe);
+
+    const unauthorized = await app.inject({ method: "GET", url: "/ready" });
+    const ready = await app.inject({
+      method: "GET",
+      url: "/ready",
+      headers: { "x-readiness-key": "readiness-secret" }
+    });
+
+    expect(unauthorized.statusCode).toBe(401);
+    expect(probe.check).toHaveBeenCalledTimes(1);
+    expect(ready.statusCode).toBe(200);
+    expect(ready.json()).toEqual({
+      status: "ready",
+      linkedIn: expect.objectContaining({ authenticated: true, reason: null })
+    });
     await app.close();
   });
 

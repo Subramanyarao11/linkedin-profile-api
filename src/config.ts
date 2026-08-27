@@ -16,6 +16,9 @@ const environmentSchema = z.object({
   REQUESTS_PER_MINUTE: z.coerce.number().int().min(1).max(1000).default(10),
   LINKEDIN_LI_AT: z.string().optional(),
   LINKEDIN_JSESSIONID: z.string().optional(),
+  READINESS_KEY: z.string().default(""),
+  READINESS_CACHE_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(300),
+  READINESS_TIMEOUT_MS: z.coerce.number().int().min(1000).max(30000).default(5000),
   INCLUDE_DETAIL_PAGES: booleanFromString("true"),
   SCRAPE_TIMEOUT_MS: z.coerce.number().int().min(5000).max(120000).default(45000),
   SCRAPE_CONCURRENCY: z.coerce.number().int().min(1).max(3).default(1),
@@ -36,11 +39,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     throw new Error("API_KEYS must contain at least one key when API_ACCESS_MODE=api-key");
   }
 
+  const hasLinkedInSession = Boolean(
+    value.LINKEDIN_LI_AT?.trim() && value.LINKEDIN_JSESSIONID?.trim()
+  );
+
   return {
     ...value,
     apiKeys,
-    hasLinkedInSession: Boolean(
-      value.LINKEDIN_LI_AT?.trim() && value.LINKEDIN_JSESSIONID?.trim()
-    )
+    hasLinkedInSession,
+    readinessCheckConfigured: Boolean(value.READINESS_KEY.trim() && hasLinkedInSession)
   };
 }

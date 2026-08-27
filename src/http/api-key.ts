@@ -9,14 +9,20 @@ function keyMatches(provided: string, expected: string): boolean {
 }
 
 export function createApiKeyGuard(apiKeys: readonly string[]): preHandlerHookHandler {
+  return createHeaderKeyGuard("x-api-key", apiKeys, "A valid x-api-key header is required.");
+}
+
+export function createHeaderKeyGuard(
+  headerName: string,
+  keys: readonly string[],
+  message: string
+): preHandlerHookHandler {
   return async (request, reply) => {
-    const header = request.headers["x-api-key"];
+    const header = request.headers[headerName];
     const provided = Array.isArray(header) ? header[0] : header;
 
-    if (!provided || !apiKeys.some((expected) => keyMatches(provided, expected))) {
-      return reply
-        .code(401)
-        .send(apiError("unauthorized", "A valid x-api-key header is required.", request.id));
+    if (!provided || !keys.some((expected) => keyMatches(provided, expected))) {
+      return reply.code(401).send(apiError("unauthorized", message, request.id));
     }
   };
 }

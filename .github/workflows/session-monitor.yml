@@ -1,0 +1,33 @@
+name: LinkedIn Session Monitor
+
+on:
+  schedule:
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      DEPLOYMENT_URL: ${{ secrets.DEPLOYMENT_URL }}
+      READINESS_KEY: ${{ secrets.READINESS_KEY }}
+    steps:
+      - name: Check deployed LinkedIn session
+        shell: bash
+        run: |
+          if [[ -z "$DEPLOYMENT_URL" || -z "$READINESS_KEY" ]]; then
+            echo "::notice::Set DEPLOYMENT_URL and READINESS_KEY repository secrets to enable monitoring."
+            exit 0
+          fi
+
+          curl \
+            --fail-with-body \
+            --silent \
+            --show-error \
+            --max-time 30 \
+            --header "x-readiness-key: $READINESS_KEY" \
+            "${DEPLOYMENT_URL%/}/ready"

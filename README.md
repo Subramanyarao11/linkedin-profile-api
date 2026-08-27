@@ -14,6 +14,7 @@ The extraction runtime is **pure HTTP**. It does not launch, control, or depend 
 - `POST /v1/profiles` accepts a LinkedIn profile URL
 - Name, headline, location, about, experience, education, skills, certifications, languages, and profile images when LinkedIn returns them
 - Direct authenticated HTTP requests—no Playwright, Selenium, Puppeteer, Chromium, or other browser runtime
+- Protected cached session-readiness verification and an optional scheduled GitHub monitor
 - Validated inputs, bounded concurrency, caching, per-IP rate limiting, consistent errors, OpenAPI docs, tests, and a production Docker image
 - Credentials supplied only through environment secrets
 
@@ -49,6 +50,7 @@ Both cookies are required by the direct HTTP flow:
 ```dotenv
 LINKEDIN_LI_AT=your_li_at_value
 LINKEDIN_JSESSIONID="ajax:your_value"
+READINESS_KEY=a_separate_random_monitoring_key
 ```
 
 To obtain them from a LinkedIn session you own:
@@ -61,6 +63,8 @@ To obtain them from a LinkedIn session you own:
 These values are equivalent to credentials. Never paste them into source, logs, issues, screenshots, or Git commits. `.env` and `storage-state.json` are gitignored, but environment secrets are the supported runtime configuration.
 
 The session can expire or be invalidated. Replace the two secrets after signing in manually again; the service intentionally does not automate login or checkpoint recovery.
+
+The direct client honors a new `li_at` or `JSESSIONID` if LinkedIn legitimately rotates either through a `Set-Cookie` response while the process remains alive. This can preserve normal server-directed rotation, but it cannot renew an expired login and in-memory rotations do not survive a Render restart.
 
 ## Evaluator workflow
 
@@ -175,8 +179,45 @@ Example response (values shortened; this documents the schema, not the current p
 Returns process health and whether both session cookies were configured. It does not validate or expose the values:
 
 ```json
-{ "status": "ok", "linkedInSessionConfigured": true }
+{
+  "status": "ok",
+  "linkedInSessionConfigured": true,
+  "readinessCheckConfigured": true
+}
 ```
+
+This is a liveness/configuration check and does not contact LinkedIn.
+
+### `GET /ready`
+
+Actively validates the configured session through LinkedIn's lightweight authenticated `/voyager/api/me` endpoint. It is protected separately so public callers cannot trigger monitoring requests:
+
+```bash
+curl --fail \
+  --header 'x-readiness-key: <READINESS_KEY>' \
+  'https://<service-name>.onrender.com/ready'
+```
+
+```json
+{
+  "status": "ready",
+  "linkedIn": {
+    "authenticated": true,
+    "checkedAt": "2026-08-27T13:20:46.000Z",
+    "durationMs": 180,
+    "reason": null,
+    "cache": "miss"
+  }
+}
+```
+
+Successful and failed checks are cached for five minutes by default. An invalid session returns HTTP `503` with `status: "not_ready"` and a non-sensitive reason such as `authentication_required`; an incorrect monitoring key returns `401`.
+
+### Can the cookies be refreshed automatically?
+
+Not after the web session has expired. LinkedIn's supported refresh-token endpoint applies to OAuth access tokens for approved products/partners; it does not refresh `li_at`/`JSESSIONID` web cookies or grant the arbitrary-profile visibility required by this assignment. OpenID Connect similarly returns lite information about the consenting signed-in member, not arbitrary profiles. See LinkedIn's official [OAuth refresh-token documentation](https://learn.microsoft.com/en-us/linkedin/shared/authentication/programmatic-refresh-tokens) and [OpenID Connect documentation](https://learn.microsoft.com/en-us/linkedin/consumer/integrations/self-serve/sign-in-with-linkedin-v2).
+
+Automating the username/password login flow would introduce credential storage, checkpoints/MFA, and challenge-bypass risk, and would conflict with this project's no-browser, no-login-automation boundary. When readiness reports expiry, sign in normally and replace the two encrypted deployment secrets.
 
 ## Reverse-engineered extraction approach
 
@@ -201,6 +242,9 @@ No client-side JavaScript is executed. There is no user-agent impersonation, fin
 | `API_KEYS` | empty | Comma-separated accepted API keys |
 | `LINKEDIN_LI_AT` | empty | Required LinkedIn authenticated-session cookie |
 | `LINKEDIN_JSESSIONID` | empty | Required LinkedIn session/CSRF cookie |
+| `READINESS_KEY` | empty | Secret header value protecting active `/ready` checks |
+| `READINESS_CACHE_TTL_SECONDS` | `300` | Cache lifetime for active session-check results |
+| `READINESS_TIMEOUT_MS` | `5000` | Timeout for the lightweight session check |
 | `INCLUDE_DETAIL_PAGES` | `true` | Request the five standard detail routes |
 | `REQUESTS_PER_MINUTE` | `10` | Per-IP profile-request limit |
 | `SCRAPE_TIMEOUT_MS` | `45000` | Timeout for each outbound LinkedIn request |
@@ -227,9 +271,20 @@ The included `render.yaml` defines a Free Docker web service with Render-managed
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Subramanyarao11/linkedin-profile-api)
 
 1. Click **Deploy to Render** and create the Blueprint.
-2. Supply `LINKEDIN_LI_AT` and `LINKEDIN_JSESSIONID` in Render's encrypted secret prompts. Do not add their values to `render.yaml`.
+2. Supply `LINKEDIN_LI_AT`, `LINKEDIN_JSESSIONID`, and a separately generated `READINESS_KEY` in Render's encrypted secret prompts. Do not add their values to `render.yaml`.
 3. Open `https://<service-name>.onrender.com/`, paste a profile URL, and inspect the structured response.
 4. Verify `/health`, `/docs`, and `POST /v1/profiles`.
+
+### Expiry monitoring
+
+`.github/workflows/session-monitor.yml` calls the protected readiness endpoint every six hours and fails when the deployed session is no longer authenticated. To enable it:
+
+1. In GitHub, open **Settings → Secrets and variables → Actions**.
+2. Add `DEPLOYMENT_URL`, for example `https://linkedin-profile-api.onrender.com`.
+3. Add `READINESS_KEY` with the same value configured in Render.
+4. Run **LinkedIn Session Monitor** manually once from the Actions tab and enable GitHub Actions failure notifications for the repository.
+
+Until both repository secrets exist, the scheduled workflow exits successfully with a setup notice and makes no request. The `/ready` cache prevents repeated checks from repeatedly contacting LinkedIn.
 
 Free services sleep while idle, so the first request after inactivity can be slow. Automatic deploys are disabled so a reviewed, working extraction version is not replaced unexpectedly. Other container hosts work if they provide outbound HTTPS, encrypted secrets, and TLS termination.
 
@@ -239,6 +294,7 @@ Free services sleep while idle, so the first request after inactivity can be slo
 - Results are limited to what the configured account can see and vary with privacy settings, locale, experiments, and the sections a member has populated.
 - Some detail routes may return an empty server-rendered card even when another LinkedIn client surface displays the section; the API reports the result as partial instead of guessing.
 - Session cookies expire and can trigger login or a checkpoint. The API reports this and requires manual session renewal.
+- Server-issued auth-cookie rotations are retained only in memory; Render restarts return to the encrypted values configured in the service.
 - Each uncached full extraction can make up to seven sequential LinkedIn requests: profile HTML, About RSC, and five detail routes. Disable detail pages or increase cache TTL to reduce traffic.
 - Image URLs can be resized, signed, or temporary.
 - The cache and concurrency control are per process. Multiple replicas need shared coordination before using one backing account.
@@ -259,6 +315,8 @@ src/
     rsc.ts                     React Flight hydration/component parser
     normalize.ts               Stable response-schema orchestration
     normalization/             Entity, HTML, dates, images, and value helpers
+  linkedin-session.ts          Shared cookie state and safe response rotation
+  linkedin-readiness.ts        Cached lightweight authentication probe
   profile-url.ts               Strict URL canonicalization and SSRF guard
   scrape-service.ts            Bounded concurrency and in-memory cache
   server.ts                    Runtime construction and graceful shutdown

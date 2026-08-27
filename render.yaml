@@ -15,6 +15,12 @@ services:
         sync: false
       - key: LINKEDIN_JSESSIONID
         sync: false
+      - key: READINESS_KEY
+        sync: false
+      - key: READINESS_CACHE_TTL_SECONDS
+        value: "300"
+      - key: READINESS_TIMEOUT_MS
+        value: "5000"
       - key: INCLUDE_DETAIL_PAGES
         value: "true"
       - key: SCRAPE_CONCURRENCY

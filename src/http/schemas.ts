@@ -53,7 +53,27 @@ export const healthResponseSchema = {
   type: "object",
   properties: {
     status: { type: "string" },
-    linkedInSessionConfigured: { type: "boolean" }
+    linkedInSessionConfigured: { type: "boolean" },
+    readinessCheckConfigured: { type: "boolean" }
+  }
+} as const;
+
+export const readinessResponseSchema = {
+  type: "object",
+  required: ["status", "linkedIn"],
+  properties: {
+    status: { type: "string", enum: ["ready", "not_ready"] },
+    linkedIn: {
+      type: "object",
+      required: ["authenticated", "checkedAt", "durationMs", "reason", "cache"],
+      properties: {
+        authenticated: { type: "boolean" },
+        checkedAt: { type: "string", format: "date-time" },
+        durationMs: { type: "integer" },
+        reason: { type: "string", nullable: true },
+        cache: { type: "string", enum: ["hit", "miss"] }
+      }
+    }
   }
 } as const;
 

@@ -1,5 +1,6 @@
 import type { AppConfig } from "../config.js";
 import { ScrapeError } from "../errors.js";
+import { LinkedInSession } from "../linkedin-session.js";
 import type { PageSnapshot, ScrapeResult } from "../types.js";
 import { appendRscAbout, mergePageSnapshots, parseHtmlSnapshot } from "./html-snapshot.js";
 import { normalizeProfile } from "./normalize.js";
@@ -27,7 +28,8 @@ type DetailResult = {
 export class LinkedInHttpExtractor {
   constructor(
     private readonly config: AppConfig,
-    private readonly request: Fetch = fetch
+    private readonly request: Fetch = fetch,
+    private readonly session = new LinkedInSession(config)
   ) {}
 
   async scrape(profileUrl: string, publicIdentifier: string): Promise<ScrapeResult> {
@@ -77,7 +79,7 @@ export class LinkedInHttpExtractor {
   }
 
   private assertSessionConfigured(): void {
-    if (this.config.hasLinkedInSession) return;
+    if (this.session.configured) return;
     throw new ScrapeError(
       "authentication_required",
       "No complete LinkedIn session is configured. Set LINKEDIN_LI_AT and LINKEDIN_JSESSIONID.",
@@ -143,17 +145,21 @@ export class LinkedInHttpExtractor {
   }
 
   private headers(): Record<string, string> {
-    const liAt = this.config.LINKEDIN_LI_AT ?? "";
-    const jsessionId = this.config.LINKEDIN_JSESSIONID ?? "";
     return {
       accept: "text/html,application/xhtml+xml,application/octet-stream;q=0.9,*/*;q=0.8",
-      cookie: `li_at=${liAt}; JSESSIONID=${jsessionId}`,
-      "csrf-token": jsessionId.replace(/^"|"$/g, ""),
-      "user-agent": "linkedin-profile-api/1.0"
+      ...this.session.authHeaders()
     };
   }
 
   private async readLinkedInResponse(response: Response, label: string): Promise<string> {
+    this.session.captureRotations(response.headers);
+    if (!this.session.configured) {
+      throw new ScrapeError(
+        "authentication_required",
+        "LinkedIn invalidated the configured session. Replace both session cookies.",
+        503
+      );
+    }
     const location = response.headers.get("location");
     if (response.status >= 300 && response.status < 400) {
       const redirectUrl = location

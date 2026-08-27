@@ -13,7 +13,8 @@ export function registerHealthRoute(app: FastifyInstance, config: AppConfig): vo
     },
     async () => ({
       status: "ok",
-      linkedInSessionConfigured: config.hasLinkedInSession
+      linkedInSessionConfigured: config.hasLinkedInSession,
+      readinessCheckConfigured: config.readinessCheckConfigured
     })
   );
 }

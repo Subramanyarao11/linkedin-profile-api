@@ -67,7 +67,11 @@ async function runMainChecks() {
 
     const health = await request("/health");
     assert.equal(health.status, 200); assertions += 1;
-    assert.deepEqual(health.body, { status: "ok", linkedInSessionConfigured: false }); assertions += 1;
+    assert.deepEqual(health.body, {
+      status: "ok",
+      linkedInSessionConfigured: false,
+      readinessCheckConfigured: false
+    }); assertions += 1;
 
     const docs = await request("/docs/");
     assert.equal(docs.status, 200); assertions += 1;
