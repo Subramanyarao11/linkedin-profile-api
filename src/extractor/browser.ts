@@ -9,6 +9,7 @@ import type { AppConfig } from "../config.js";
 import { ScrapeError } from "../errors.js";
 import type { DomSnapshot, ScrapeResult } from "../types.js";
 import { normalizeProfile } from "./normalize.js";
+import { classifyBlockedPage } from "./page-state.js";
 
 const NETWORK_PAYLOAD_LIMIT = 150;
 const NETWORK_BODY_LIMIT_BYTES = 8 * 1024 * 1024;
@@ -36,19 +37,26 @@ export class LinkedInBrowserExtractor {
     const context = await this.createContext(browser);
     const page = await context.newPage();
     const payloads: unknown[] = [];
+    const pendingPayloads = new Set<Promise<void>>();
 
-    page.on("response", async (response) => {
+    page.on("response", (response) => {
       if (payloads.length >= NETWORK_PAYLOAD_LIMIT) return;
       const url = response.url();
       if (!url.includes("linkedin.com/voyager/api/") && !url.includes("linkedin.com/graphql")) return;
       const contentType = response.headers()["content-type"] ?? "";
       const contentLength = Number(response.headers()["content-length"] ?? 0);
       if (!contentType.includes("json") || contentLength > NETWORK_BODY_LIMIT_BYTES) return;
-      try {
-        payloads.push(await response.json());
-      } catch {
-        // Some successful GraphQL responses are streamed or empty; the DOM fallback remains available.
-      }
+      let pending: Promise<void>;
+      pending = response
+        .json()
+        .then((payload) => {
+          payloads.push(payload);
+        })
+        .catch(() => {
+          // Some successful GraphQL responses are streamed or empty; the DOM fallback remains available.
+        })
+        .finally(() => pendingPayloads.delete(pending));
+      pendingPayloads.add(pending);
     });
 
     try {
@@ -65,7 +73,14 @@ export class LinkedInBrowserExtractor {
       }
 
       await this.detectBlockedPage(page);
-      await this.loadVisibleSections(page);
+      try {
+        await this.loadVisibleSections(page);
+      } catch (error) {
+        await this.detectBlockedPage(page);
+        throw error;
+      }
+      await this.detectBlockedPage(page);
+      await Promise.allSettled([...pendingPayloads]);
       const snapshot = await this.snapshotDom(page);
       const result = normalizeProfile(payloads, snapshot, profileUrl, publicIdentifier);
 
@@ -160,21 +175,9 @@ export class LinkedInBrowserExtractor {
   }
 
   private async detectBlockedPage(page: Page): Promise<void> {
-    const currentUrl = page.url();
-    if (/\/checkpoint\/(challenge|lg)\b/i.test(currentUrl)) {
-      throw new ScrapeError(
-        "challenge_required",
-        "LinkedIn requires an interactive checkpoint. Refresh the session manually; this service does not bypass challenges.",
-        503
-      );
-    }
-    if (/\/login\b|\/authwall\b/i.test(currentUrl)) {
-      throw new ScrapeError(
-        "authentication_required",
-        "The configured LinkedIn session is missing or expired.",
-        503
-      );
-    }
+    const bodyText = await page.locator("body").innerText().catch(() => "");
+    const blocked = classifyBlockedPage(page.url(), bodyText);
+    if (blocked) throw new ScrapeError(blocked.code, blocked.message, blocked.statusCode);
   }
 
   private async loadVisibleSections(page: Page): Promise<void> {
@@ -210,6 +213,7 @@ export class LinkedInBrowserExtractor {
         }
       );
       const h1 = document.querySelector("main h1, h1");
+      const titleName = document.title.match(/^(.+?)\s*\|\s*LinkedIn$/i)?.[1]?.trim() ?? null;
       const profileImage = document.querySelector<HTMLImageElement>(
         'main img[alt*="profile" i], main img[alt*="photo" i], main img[src*="profile-displayphoto"]'
       );
@@ -227,7 +231,7 @@ export class LinkedInBrowserExtractor {
       });
 
       return {
-        name: text(h1),
+        name: text(h1) ?? titleName,
         headline: nearbyText.find((value) => value !== text(h1) && value.length > 5) ?? null,
         location: nearbyText.find((value) => /,| area$| region$/i.test(value)) ?? null,
         profileImage: profileImage?.src ?? null,
