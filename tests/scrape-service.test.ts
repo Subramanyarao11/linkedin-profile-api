@@ -28,7 +28,12 @@ const result = {
 describe("ScrapeService", () => {
   it("caches successful results and supports refresh", async () => {
     const scrape = vi.fn().mockResolvedValue(result);
-    const service = new ScrapeService({ scrape }, 1, 60_000, 10);
+    const service = new ScrapeService({
+      extractor: { scrape },
+      concurrency: 1,
+      ttlMs: 60_000,
+      maxCacheEntries: 10
+    });
     const url = "https://www.linkedin.com/in/demo-person/";
 
     expect((await service.get(url, "demo-person")).cache).toBe("miss");
@@ -47,7 +52,12 @@ describe("ScrapeService", () => {
       active -= 1;
       return result;
     });
-    const service = new ScrapeService({ scrape }, 1, 0, 10);
+    const service = new ScrapeService({
+      extractor: { scrape },
+      concurrency: 1,
+      ttlMs: 0,
+      maxCacheEntries: 10
+    });
 
     await Promise.all([
       service.get("https://www.linkedin.com/in/first-person/", "first-person"),
@@ -64,7 +74,12 @@ describe("ScrapeService", () => {
       .fn()
       .mockRejectedValueOnce(new Error("synthetic failure"))
       .mockResolvedValueOnce(result);
-    const service = new ScrapeService({ scrape }, 1, 0, 10);
+    const service = new ScrapeService({
+      extractor: { scrape },
+      concurrency: 1,
+      ttlMs: 0,
+      maxCacheEntries: 10
+    });
 
     const first = service.get("https://www.linkedin.com/in/failing-person/", "failing-person");
     const second = service.get("https://www.linkedin.com/in/demo-person/", "demo-person");

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mergeDomSnapshots } from "../src/extractor/browser.js";
+import { mergeDomSnapshots } from "../src/extractor/dom-snapshot.js";
 import type { DomSnapshot } from "../src/types.js";
 
 const primary: DomSnapshot = {

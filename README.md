@@ -281,13 +281,25 @@ The Docker image also runs on Fly.io, Railway, Cloud Run, ECS/Fargate, or any co
 
 ```text
 src/
-  app.ts                    Fastify routes, OpenAPI, auth, rate limiting
+  app.ts                    Fastify composition root
   config.ts                 Validated environment configuration
+  http/
+    api-error.ts            Consistent API error translation
+    api-key.ts              Constant-time API-key guard
+    plugins.ts              Helmet, rate-limit, and OpenAPI setup
+    routes/                 Evaluator, health, and profile routes
+    schemas.ts              JSON/OpenAPI request and response schemas
   ui.ts                     Server-rendered evaluator interface
-  extractor/browser.ts      Authenticated browser and response capture
-  extractor/normalize.ts    LinkedIn entity-to-schema normalization
+  extractor/
+    browser.ts              High-level authenticated scrape workflow
+    dom-snapshot.ts         Browser-side DOM snapshot capture
+    network-capture.ts      First-party JSON response collection
+    storage-state.ts        Session-state resolution and browser context
+    normalize.ts            Entity-to-response orchestration
+    normalization/          DOM and payload normalization helpers
   profile-url.ts            Strict URL canonicalization / SSRF guard
   scrape-service.ts         Bounded concurrency and cache
+  server.ts                 Runtime construction and graceful shutdown
 tests/                      Synthetic fixtures and unit/API tests
 Dockerfile                  Multi-stage production container
 render.yaml                 Render Blueprint (secrets stay external)

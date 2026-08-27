@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 import { ScrapeError } from "../src/errors.js";
-import { resolveStorageState } from "../src/extractor/browser.js";
+import { resolveStorageState } from "../src/extractor/storage-state.js";
 
 const temporaryDirectories: string[] = [];
 

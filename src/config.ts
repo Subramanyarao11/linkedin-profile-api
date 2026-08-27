@@ -1,11 +1,13 @@
 import { z } from "zod";
 
-const booleanFromString = z
-  .enum(["true", "false"])
-  .default("false")
-  .transform((value) => value === "true");
+function booleanFromString(defaultValue: "true" | "false") {
+  return z
+    .enum(["true", "false"])
+    .default(defaultValue)
+    .transform((value) => value === "true");
+}
 
-const schema = z.object({
+const environmentSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   HOST: z.string().default("0.0.0.0"),
@@ -17,11 +19,8 @@ const schema = z.object({
   LINKEDIN_STORAGE_STATE_JSON: z.string().optional(),
   LINKEDIN_STORAGE_STATE_PATH: z.string().optional(),
   LINKEDIN_STORAGE_STATE_SEED_PATH: z.string().optional(),
-  ALLOW_GUEST_MODE: booleanFromString,
-  INCLUDE_DETAIL_PAGES: z
-    .enum(["true", "false"])
-    .default("true")
-    .transform((value) => value === "true"),
+  ALLOW_GUEST_MODE: booleanFromString("false"),
+  INCLUDE_DETAIL_PAGES: booleanFromString("true"),
   SCRAPE_TIMEOUT_MS: z.coerce.number().int().min(5000).max(120000).default(45000),
   SCRAPE_CONCURRENCY: z.coerce.number().int().min(1).max(3).default(1),
   PROFILE_CACHE_TTL_SECONDS: z.coerce.number().int().min(0).max(86400).default(900),
@@ -32,7 +31,7 @@ const schema = z.object({
 export type AppConfig = ReturnType<typeof loadConfig>;
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
-  const value = schema.parse(env);
+  const value = environmentSchema.parse(env);
   const apiKeys = value.API_KEYS.split(",")
     .map((key) => key.trim())
     .filter(Boolean);

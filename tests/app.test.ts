@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { buildApp } from "../src/app.js";
 import { loadConfig } from "../src/config.js";
-import type { ScrapeService } from "../src/scrape-service.js";
+import type { ProfileService } from "../src/scrape-service.js";
 
 const config = loadConfig({
   NODE_ENV: "test",
@@ -36,7 +36,7 @@ const fakeService = {
       }
     }
   })
-} as unknown as ScrapeService;
+} satisfies ProfileService;
 
 describe("API", () => {
   it("serves a profile form at the base URL", async () => {
@@ -104,7 +104,7 @@ describe("API", () => {
 
   it("does not allow public callers to bypass the cache", async () => {
     const get = vi.fn().mockImplementation(fakeService.get.bind(fakeService));
-    const publicService = { get } as unknown as ScrapeService;
+    const publicService = { get } satisfies ProfileService;
     const publicConfig = loadConfig({ NODE_ENV: "test", API_ACCESS_MODE: "public" });
     const app = await buildApp(publicConfig, publicService);
 

@@ -10,10 +10,11 @@
     "start": "node --env-file-if-exists=.env dist/server.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "npm run typecheck",
     "capture:fixture": "node --env-file-if-exists=.env scripts/capture-profile-fixture.mjs",
     "smoke": "npm run build && node scripts/local-smoke.mjs",
-    "check": "npm run lint && npm test && npm run smoke"
+    "check": "npm run typecheck && npm test && npm run smoke"
   },
   "engines": {
     "node": ">=22"

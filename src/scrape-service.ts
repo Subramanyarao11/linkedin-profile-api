@@ -1,7 +1,23 @@
 import type { ScrapeResult } from "./types.js";
 
-type Extractor = {
+export type ProfileExtractor = {
   scrape(profileUrl: string, publicIdentifier: string): Promise<ScrapeResult>;
+};
+
+export type ProfileLookup = {
+  result: ScrapeResult;
+  cache: "hit" | "miss";
+};
+
+export type ProfileService = {
+  get(profileUrl: string, publicIdentifier: string, refresh?: boolean): Promise<ProfileLookup>;
+};
+
+export type ScrapeServiceOptions = {
+  extractor: ProfileExtractor;
+  concurrency: number;
+  ttlMs: number;
+  maxCacheEntries: number;
 };
 
 type CacheEntry = {
@@ -9,23 +25,27 @@ type CacheEntry = {
   result: ScrapeResult;
 };
 
-export class ScrapeService {
+export class ScrapeService implements ProfileService {
   private readonly cache = new Map<string, CacheEntry>();
   private readonly queue: Array<() => void> = [];
+  private readonly extractor: ProfileExtractor;
+  private readonly concurrency: number;
+  private readonly ttlMs: number;
+  private readonly maxCacheEntries: number;
   private active = 0;
 
-  constructor(
-    private readonly extractor: Extractor,
-    private readonly concurrency: number,
-    private readonly ttlMs: number,
-    private readonly maxCacheEntries: number
-  ) {}
+  constructor({ extractor, concurrency, ttlMs, maxCacheEntries }: ScrapeServiceOptions) {
+    this.extractor = extractor;
+    this.concurrency = concurrency;
+    this.ttlMs = ttlMs;
+    this.maxCacheEntries = maxCacheEntries;
+  }
 
   async get(
     profileUrl: string,
     publicIdentifier: string,
     refresh = false
-  ): Promise<{ result: ScrapeResult; cache: "hit" | "miss" }> {
+  ): Promise<ProfileLookup> {
     const cached = this.cache.get(profileUrl);
     if (!refresh && cached && cached.expiresAt > Date.now()) {
       this.cache.delete(profileUrl);
