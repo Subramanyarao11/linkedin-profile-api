@@ -1,6 +1,7 @@
 import type { FastifyInstance, preHandlerHookHandler } from "fastify";
 import type { AppConfig } from "../../config.js";
 import type { SessionProbe } from "../../linkedin-readiness.js";
+import type { SessionAlertService } from "../../session-alert.js";
 import { apiError } from "../api-error.js";
 import { createHeaderKeyGuard } from "../api-key.js";
 import {
@@ -11,7 +12,8 @@ import {
 export function registerReadinessRoute(
   app: FastifyInstance,
   config: AppConfig,
-  probe: SessionProbe
+  probe: SessionProbe,
+  sessionAlerts: SessionAlertService
 ): void {
   app.get(
     "/ready",
@@ -32,8 +34,18 @@ export function registerReadinessRoute(
         }
       }
     },
-    async (_request, reply) => {
+    async (request, reply) => {
       const result = await probe.check();
+      if (result.reason === "authentication_required" || result.reason === "challenge_required") {
+        void sessionAlerts.notify({
+          reason: result.reason,
+          source: "readiness_check"
+        }).then((outcome) => {
+          request.log.info({ outcome }, "LinkedIn session alert processed");
+        }).catch((alertError: unknown) => {
+          request.log.error({ err: alertError }, "LinkedIn session email alert failed");
+        });
+      }
       return reply.code(result.authenticated ? 200 : 503).send({
         status: result.authenticated ? "ready" : "not_ready",
         linkedIn: result

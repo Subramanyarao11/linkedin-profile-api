@@ -54,7 +54,8 @@ export const healthResponseSchema = {
   properties: {
     status: { type: "string" },
     linkedInSessionConfigured: { type: "boolean" },
-    readinessCheckConfigured: { type: "boolean" }
+    readinessCheckConfigured: { type: "boolean" },
+    sessionEmailAlertConfigured: { type: "boolean" }
   }
 } as const;
 

@@ -8,11 +8,13 @@ import { registerHealthRoute } from "./http/routes/health.js";
 import { registerProfileRoute } from "./http/routes/profiles.js";
 import { registerReadinessRoute } from "./http/routes/readiness.js";
 import type { ProfileService } from "./scrape-service.js";
+import { EmailSessionAlert, type SessionAlertService } from "./session-alert.js";
 
 export async function buildApp(
   config: AppConfig,
   service: ProfileService,
-  sessionProbe: SessionProbe = new LinkedInReadinessProbe(config)
+  sessionProbe: SessionProbe = new LinkedInReadinessProbe(config),
+  sessionAlerts: SessionAlertService = new EmailSessionAlert(config)
 ): Promise<FastifyInstance> {
   const apiKeyRequired = config.API_ACCESS_MODE === "api-key";
   const app = Fastify({
@@ -26,8 +28,8 @@ export async function buildApp(
   registerErrorHandler(app);
   registerEvaluatorRoute(app, apiKeyRequired);
   registerHealthRoute(app, config);
-  registerReadinessRoute(app, config, sessionProbe);
-  registerProfileRoute(app, { config, service, apiKeyRequired });
+  registerReadinessRoute(app, config, sessionProbe, sessionAlerts);
+  registerProfileRoute(app, { config, service, apiKeyRequired, sessionAlerts });
 
   return app;
 }

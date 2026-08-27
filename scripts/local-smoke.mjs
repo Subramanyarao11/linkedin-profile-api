@@ -70,7 +70,8 @@ async function runMainChecks() {
     assert.deepEqual(health.body, {
       status: "ok",
       linkedInSessionConfigured: false,
-      readinessCheckConfigured: false
+      readinessCheckConfigured: false,
+      sessionEmailAlertConfigured: false
     }); assertions += 1;
 
     const docs = await request("/docs/");

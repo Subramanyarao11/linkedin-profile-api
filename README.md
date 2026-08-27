@@ -182,7 +182,8 @@ Returns process health and whether both session cookies were configured. It does
 {
   "status": "ok",
   "linkedInSessionConfigured": true,
-  "readinessCheckConfigured": true
+  "readinessCheckConfigured": true,
+  "sessionEmailAlertConfigured": true
 }
 ```
 
@@ -212,6 +213,8 @@ curl --fail \
 ```
 
 Successful and failed checks are cached for five minutes by default. An invalid session returns HTTP `503` with `status: "not_ready"` and a non-sensitive reason such as `authentication_required`; an incorrect monitoring key returns `401`.
+
+When SMTP alerting is configured, either a failed readiness check or a recruiter request that encounters `authentication_required`/`challenge_required` immediately schedules an email. Repeated failures are suppressed for one hour by default. The message contains the reason, detection source, timestamp, service URL, and recovery instructions; it never contains LinkedIn cookies or the requested profile URL.
 
 ### Can the cookies be refreshed automatically?
 
@@ -245,6 +248,15 @@ No client-side JavaScript is executed. There is no user-agent impersonation, fin
 | `READINESS_KEY` | empty | Secret header value protecting active `/ready` checks |
 | `READINESS_CACHE_TTL_SECONDS` | `300` | Cache lifetime for active session-check results |
 | `READINESS_TIMEOUT_MS` | `5000` | Timeout for the lightweight session check |
+| `SMTP_HOST` | empty | SMTP server used for immediate session alerts |
+| `SMTP_PORT` | `587` | SMTP server port |
+| `SMTP_SECURE` | `false` | Use implicit TLS, normally `true` with port `465` |
+| `SMTP_USER` | empty | SMTP account username |
+| `SMTP_PASS` | empty | SMTP password or provider-specific App Password |
+| `SESSION_ALERT_EMAIL_FROM` | `SMTP_USER` | Optional sender override |
+| `SESSION_ALERT_EMAIL_TO` | empty | Destination for session-expiry alerts |
+| `SESSION_ALERT_COOLDOWN_SECONDS` | `3600` | Minimum interval between duplicate alert emails |
+| `SERVICE_PUBLIC_URL` | empty | Public deployment URL included in recovery emails |
 | `INCLUDE_DETAIL_PAGES` | `true` | Request the five standard detail routes |
 | `REQUESTS_PER_MINUTE` | `10` | Per-IP profile-request limit |
 | `SCRAPE_TIMEOUT_MS` | `45000` | Timeout for each outbound LinkedIn request |
@@ -272,8 +284,9 @@ The included `render.yaml` defines a Free Docker web service with Render-managed
 
 1. Click **Deploy to Render** and create the Blueprint.
 2. Supply `LINKEDIN_LI_AT`, `LINKEDIN_JSESSIONID`, and a separately generated `READINESS_KEY` in Render's encrypted secret prompts. Do not add their values to `render.yaml`.
-3. Open `https://<service-name>.onrender.com/`, paste a profile URL, and inspect the structured response.
-4. Verify `/health`, `/docs`, and `POST /v1/profiles`.
+3. To enable immediate email alerts, set `SMTP_USER`, `SMTP_PASS`, `SESSION_ALERT_EMAIL_TO`, and `SERVICE_PUBLIC_URL`. With Gmail, use a Google App Password rather than the account's normal password; the Blueprint already selects `smtp.gmail.com`, port `465`, and TLS.
+4. Open `https://<service-name>.onrender.com/`, paste a profile URL, and inspect the structured response.
+5. Verify `/health`, `/ready`, `/docs`, and `POST /v1/profiles`.
 
 ### Expiry monitoring
 
@@ -286,6 +299,8 @@ The included `render.yaml` defines a Free Docker web service with Render-managed
 
 Until both repository secrets exist, the scheduled workflow exits successfully with a setup notice and makes no request. The `/ready` cache prevents repeated checks from repeatedly contacting LinkedIn.
 
+The GitHub monitor intentionally remains on a six-hour schedule. Immediate SMTP alerting covers recruiter-triggered authentication failures between scheduled checks. GitHub Actions failure notifications provide a second signal if SMTP delivery is unavailable.
+
 Free services sleep while idle, so the first request after inactivity can be slow. Automatic deploys are disabled so a reviewed, working extraction version is not replaced unexpectedly. Other container hosts work if they provide outbound HTTPS, encrypted secrets, and TLS termination.
 
 ## Known limitations
@@ -295,6 +310,7 @@ Free services sleep while idle, so the first request after inactivity can be slo
 - Some detail routes may return an empty server-rendered card even when another LinkedIn client surface displays the section; the API reports the result as partial instead of guessing.
 - Session cookies expire and can trigger login or a checkpoint. The API reports this and requires manual session renewal.
 - Server-issued auth-cookie rotations are retained only in memory; Render restarts return to the encrypted values configured in the service.
+- Email alerts are best-effort and depend on the configured SMTP provider; one-hour deduplication prevents a broken public session from generating an email storm.
 - Each uncached full extraction can make up to seven sequential LinkedIn requests: profile HTML, About RSC, and five detail routes. Disable detail pages or increase cache TTL to reduce traffic.
 - Image URLs can be resized, signed, or temporary.
 - The cache and concurrency control are per process. Multiple replicas need shared coordination before using one backing account.
@@ -317,6 +333,7 @@ src/
     normalization/             Entity, HTML, dates, images, and value helpers
   linkedin-session.ts          Shared cookie state and safe response rotation
   linkedin-readiness.ts        Cached lightweight authentication probe
+  session-alert.ts             Deduplicated SMTP authentication alerts
   profile-url.ts               Strict URL canonicalization and SSRF guard
   scrape-service.ts            Bounded concurrency and in-memory cache
   server.ts                    Runtime construction and graceful shutdown

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { buildApp } from "../src/app.js";
 import { loadConfig } from "../src/config.js";
+import { ScrapeError } from "../src/errors.js";
 import type { ProfileService } from "../src/scrape-service.js";
 
 const config = loadConfig({
@@ -55,7 +56,41 @@ describe("API", () => {
     expect(response.json()).toEqual({
       status: "ok",
       linkedInSessionConfigured: false,
-      readinessCheckConfigured: false
+      readinessCheckConfigured: false,
+      sessionEmailAlertConfigured: false
+    });
+    await app.close();
+  });
+
+  it("triggers an immediate alert when readiness detects an expired session", async () => {
+    const readyConfig = loadConfig({
+      NODE_ENV: "test",
+      READINESS_KEY: "readiness-secret",
+      LINKEDIN_LI_AT: "synthetic-li-at",
+      LINKEDIN_JSESSIONID: '"ajax:synthetic"'
+    });
+    const probe = {
+      check: vi.fn().mockResolvedValue({
+        authenticated: false,
+        checkedAt: "2026-08-27T00:00:00.000Z",
+        durationMs: 12,
+        reason: "authentication_required" as const,
+        cache: "miss" as const
+      })
+    };
+    const sessionAlerts = { notify: vi.fn().mockResolvedValue("sent" as const) };
+    const app = await buildApp(readyConfig, fakeService, probe, sessionAlerts);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/ready",
+      headers: { "x-readiness-key": "readiness-secret" }
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(sessionAlerts.notify).toHaveBeenCalledWith({
+      reason: "authentication_required",
+      source: "readiness_check"
     });
     await app.close();
   });
@@ -104,6 +139,37 @@ describe("API", () => {
     });
     expect(response.statusCode).toBe(401);
     expect(response.json().error.code).toBe("unauthorized");
+    await app.close();
+  });
+
+  it("triggers an immediate alert when profile extraction loses authentication", async () => {
+    const failingService = {
+      async get(): Promise<never> {
+        throw new ScrapeError(
+          "authentication_required",
+          "The configured LinkedIn session is missing or expired.",
+          503
+        );
+      }
+    };
+    const unusedProbe = {
+      check: vi.fn().mockRejectedValue(new Error("Readiness is not used by this test"))
+    };
+    const sessionAlerts = { notify: vi.fn().mockResolvedValue("sent" as const) };
+    const app = await buildApp(config, failingService, unusedProbe, sessionAlerts);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/profiles",
+      headers: { "x-api-key": "test-secret" },
+      payload: { url: "https://www.linkedin.com/in/demo-person/" }
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(sessionAlerts.notify).toHaveBeenCalledWith({
+      reason: "authentication_required",
+      source: "profile_extraction"
+    });
     await app.close();
   });
 

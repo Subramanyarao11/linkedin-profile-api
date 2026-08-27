@@ -3,6 +3,7 @@ import type { AppConfig } from "../../config.js";
 import { ScrapeError } from "../../errors.js";
 import { InvalidProfileUrlError, normalizeLinkedInProfileUrl } from "../../profile-url.js";
 import type { ProfileService } from "../../scrape-service.js";
+import type { SessionAlertService } from "../../session-alert.js";
 import { apiError } from "../api-error.js";
 import { createApiKeyGuard } from "../api-key.js";
 import {
@@ -20,11 +21,12 @@ type ProfileRouteOptions = {
   config: AppConfig;
   service: ProfileService;
   apiKeyRequired: boolean;
+  sessionAlerts: SessionAlertService;
 };
 
 export function registerProfileRoute(
   app: FastifyInstance,
-  { config, service, apiKeyRequired }: ProfileRouteOptions
+  { config, service, apiKeyRequired, sessionAlerts }: ProfileRouteOptions
 ): void {
   app.post<{ Body: ProfileRequestBody }>(
     "/v1/profiles",
@@ -76,6 +78,16 @@ export function registerProfileRoute(
 
         if (error instanceof ScrapeError) {
           request.log.warn({ code: error.code }, "Profile extraction failed");
+          if (error.code === "authentication_required" || error.code === "challenge_required") {
+            void sessionAlerts.notify({
+              reason: error.code,
+              source: "profile_extraction"
+            }).then((outcome) => {
+              request.log.info({ outcome }, "LinkedIn session alert processed");
+            }).catch((alertError: unknown) => {
+              request.log.error({ err: alertError }, "LinkedIn session email alert failed");
+            });
+          }
           return reply
             .code(error.statusCode)
             .send(apiError(error.code, error.message, request.id));

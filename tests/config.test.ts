@@ -41,4 +41,17 @@ describe("loadConfig", () => {
 
     expect(config.hasLinkedInSession).toBe(false);
   });
+
+  it("enables email alerts only when the complete SMTP configuration is present", () => {
+    const config = loadConfig({
+      SMTP_HOST: "smtp.example.test",
+      SMTP_USER: "smtp-user",
+      SMTP_PASS: "smtp-password",
+      SESSION_ALERT_EMAIL_FROM: "alerts@example.test",
+      SESSION_ALERT_EMAIL_TO: "owner@example.test"
+    });
+
+    expect(config.sessionEmailAlertConfigured).toBe(true);
+    expect(loadConfig({ SMTP_HOST: "smtp.example.test" }).sessionEmailAlertConfigured).toBe(false);
+  });
 });

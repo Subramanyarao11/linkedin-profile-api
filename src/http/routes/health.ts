@@ -14,7 +14,8 @@ export function registerHealthRoute(app: FastifyInstance, config: AppConfig): vo
     async () => ({
       status: "ok",
       linkedInSessionConfigured: config.hasLinkedInSession,
-      readinessCheckConfigured: config.readinessCheckConfigured
+      readinessCheckConfigured: config.readinessCheckConfigured,
+      sessionEmailAlertConfigured: config.sessionEmailAlertConfigured
     })
   );
 }
