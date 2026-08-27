@@ -219,7 +219,7 @@ export class LinkedInBrowserExtractor {
         return value || null;
       };
       const lines = (element: Element): string[] =>
-        (element.textContent ?? "")
+        ((element as HTMLElement).innerText ?? element.textContent ?? "")
           .split("\n")
           .map((line) => line.replace(/\s+/g, " ").trim())
           .filter(Boolean);
@@ -248,7 +248,18 @@ export class LinkedInBrowserExtractor {
       const sections = Array.from(document.querySelectorAll("main section")).map((section) => {
         const heading = text(section.querySelector("h2, h3")) ?? "";
         const items = Array.from(section.querySelectorAll(":scope li")).map(lines);
-        return { heading, text: text(section) ?? "", items };
+        const sectionLines = lines(section);
+        const links = Array.from(section.querySelectorAll("a")).map((anchor) => {
+          let path: string | null = null;
+          try {
+            const url = new URL((anchor as HTMLAnchorElement).href);
+            if (url.hostname === "linkedin.com" || url.hostname.endsWith(".linkedin.com")) path = url.pathname;
+          } catch {
+            // Ignore malformed/non-HTTP link targets.
+          }
+          return { text: lines(anchor), path };
+        });
+        return { heading, text: text(section) ?? "", items, lines: sectionLines, links };
       });
 
       return {

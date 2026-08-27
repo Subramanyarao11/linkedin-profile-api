@@ -87,5 +87,7 @@ export type DomSnapshot = {
     heading: string;
     text: string;
     items: string[][];
+    lines?: string[];
+    links?: Array<{ text: string[]; path: string | null }>;
   }>;
 };

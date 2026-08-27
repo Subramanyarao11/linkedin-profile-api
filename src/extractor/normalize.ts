@@ -146,6 +146,105 @@ function domSection(snapshot: DomSnapshot | undefined, heading: string) {
   return snapshot?.sections.find((section) => cleanSectionHeading(section.heading).includes(heading));
 }
 
+const monthNumbers: Record<string, number> = {
+  jan: 1,
+  feb: 2,
+  mar: 3,
+  apr: 4,
+  may: 5,
+  jun: 6,
+  jul: 7,
+  aug: 8,
+  sep: 9,
+  oct: 10,
+  nov: 11,
+  dec: 12
+};
+
+function domYearMonth(value: string): YearMonth | null {
+  const match = value.trim().match(/^(?:([A-Za-z]{3,9})\s+)?(\d{4})$/);
+  if (!match?.[2]) return null;
+  const monthName = match[1]?.slice(0, 3).toLowerCase();
+  return {
+    year: Number(match[2]),
+    month: monthName ? monthNumbers[monthName] ?? null : null
+  };
+}
+
+function domDateRange(value: string | undefined): DateRange | null {
+  if (!value) return null;
+  const dates = value.split("·")[0]?.trim().split(/\s+[-–—]\s+/);
+  if (!dates?.length || dates.length > 2) return null;
+  const start = domYearMonth(dates[0] ?? "");
+  const endText = dates[1]?.trim() ?? "";
+  const isCurrent = /^(present|current)$/i.test(endText);
+  const end = isCurrent ? null : domYearMonth(endText);
+  if (!start && !end) return null;
+  return { start, end, isCurrent };
+}
+
+function profileTopCard(snapshot: DomSnapshot | undefined): { headline: string | null; location: string | null } {
+  if (!snapshot?.name) return { headline: null, location: null };
+  const candidates = snapshot.sections
+    .filter((section) => section.heading.trim() === snapshot.name && section.lines?.length)
+    .sort((a, b) => (a.lines?.length ?? 0) - (b.lines?.length ?? 0));
+  const lines = [...(candidates[0]?.lines ?? snapshot.sections[0]?.lines ?? [])];
+  const nameIndex = lines.indexOf(snapshot.name);
+  const values = lines.slice(nameIndex >= 0 ? nameIndex + 1 : 0).filter((line) => {
+    if (/^·?\s*(1st|2nd|3rd)(\+)?$/i.test(line)) return false;
+    if (/^(·|contact info|message|profile enhanced with premium)$/i.test(line)) return false;
+    if (/followers|followed by/i.test(line)) return false;
+    return true;
+  });
+  return { headline: values[0] ?? null, location: values[1] ?? null };
+}
+
+function domExperiences(snapshot: DomSnapshot | undefined): Experience[] {
+  const section = domSection(snapshot, "experience");
+  if (!section?.links) return [];
+  return section.links.flatMap((link): Experience[] => {
+    if (!link.path || !/^\/(company|school)\//.test(link.path) || link.text.length < 3) return [];
+    const [title, company, dates, ...remaining] = link.text;
+    if (!title || !company || !dates) return [];
+    const location = remaining[0] && (/,/.test(remaining[0]) || /\b(area|remote|hybrid|on-site|onsite)$/i.test(remaining[0]))
+      ? remaining.shift() ?? null
+      : null;
+    return [{
+      title,
+      company,
+      companyLinkedInUrl: `https://www.linkedin.com${link.path}`,
+      employmentType: null,
+      location,
+      description: remaining.length ? remaining.join("\n") : null,
+      dateRange: domDateRange(dates)
+    }];
+  });
+}
+
+function domEducations(snapshot: DomSnapshot | undefined): Education[] {
+  const section = domSection(snapshot, "education");
+  if (!section?.links) return [];
+  return section.links.flatMap((link): Education[] => {
+    if (!link.path?.startsWith("/school/") || !link.text[0]) return [];
+    const [school, degreeLine, dates, ...remaining] = link.text;
+    const degreeParts = degreeLine?.split(",").map((part) => part.trim()).filter(Boolean) ?? [];
+    return [{
+      school,
+      schoolLinkedInUrl: `https://www.linkedin.com${link.path}`,
+      degree: degreeParts[0] ?? null,
+      fieldOfStudy: degreeParts.slice(1).join(", ") || null,
+      activities: null,
+      description: remaining.length ? remaining.join("\n") : null,
+      dateRange: domDateRange(dates)
+    }];
+  });
+}
+
+function domItems(snapshot: DomSnapshot | undefined, heading: string): string[][] {
+  const section = domSection(snapshot, heading);
+  return (section?.items ?? []).filter((item) => item.length && item[0] !== section?.heading);
+}
+
 function profileScore(object: AnyRecord): number {
   return ["firstName", "lastName", "headline", "summary", "publicIdentifier", "locationName"].reduce(
     (score, key) => score + (stringValue(object[key]) ? 1 : 0),
@@ -255,6 +354,25 @@ export function normalizeProfile(
   if (snapshot?.jsonLd.length) extractionMode.push("json-ld");
   if (snapshot) extractionMode.push("dom");
 
+  const topCard = profileTopCard(snapshot);
+  const domExperience = domExperiences(snapshot);
+  const domEducation = domEducations(snapshot);
+  const domSkills = domItems(snapshot, "skill").map((item) => ({
+    name: item[0] ?? "",
+    endorsementCount: numberValue(Number(item.find((line) => /endorsement/i.test(line))?.match(/\d+/)?.[0]))
+  }));
+  const domCertifications = domItems(snapshot, "certification").map((item): Certification => ({
+    name: item[0] ?? "",
+    authority: item[1] ?? null,
+    licenseNumber: item.find((line) => /credential id/i.test(line))?.replace(/^.*credential id\s*/i, "") || null,
+    credentialUrl: null,
+    dateRange: domDateRange(item.find((line) => /issued|expires/i.test(line))?.replace(/^issued\s*/i, ""))
+  }));
+  const domLanguages = domItems(snapshot, "language").map((item) => ({
+    name: item[0] ?? "",
+    proficiency: item[1] ?? null
+  }));
+
   const profile: LinkedInProfile = {
     source: {
       profileUrl,
@@ -267,17 +385,19 @@ export function normalizeProfile(
     headline:
       (profileCandidate ? firstString(profileCandidate, ["headline", "occupation", "jobTitle"]) : null) ??
       snapshot?.headline ??
+      topCard.headline ??
       null,
     location:
       (profileCandidate ? firstString(profileCandidate, ["locationName", "location", "addressLocality"]) : null) ??
       snapshot?.location ??
+      topCard.location ??
       null,
     about,
-    experience: dedupe(experiences, (entry) => `${entry.title}|${entry.company ?? ""}|${entry.dateRange?.start?.year ?? ""}`),
-    education: dedupe(educations, (entry) => `${entry.school}|${entry.degree ?? ""}|${entry.dateRange?.start?.year ?? ""}`),
-    skills: dedupe(skills, (entry) => entry.name),
-    certifications: dedupe(certifications, (entry) => `${entry.name}|${entry.authority ?? ""}`),
-    languages: dedupe(languages, (entry) => entry.name),
+    experience: dedupe([...experiences, ...domExperience], (entry) => `${entry.title}|${entry.company ?? ""}|${entry.dateRange?.start?.year ?? ""}`),
+    education: dedupe([...educations, ...domEducation], (entry) => `${entry.school}|${entry.degree ?? ""}|${entry.dateRange?.start?.year ?? ""}`),
+    skills: dedupe([...skills, ...domSkills], (entry) => entry.name),
+    certifications: dedupe([...certifications, ...domCertifications], (entry) => `${entry.name}|${entry.authority ?? ""}`),
+    languages: dedupe([...languages, ...domLanguages], (entry) => entry.name),
     profileImages: { profile: profileImage, background: backgroundImage }
   };
 
