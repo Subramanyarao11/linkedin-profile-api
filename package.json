@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "check": "npm run lint && npm test && npm run build"
+    "smoke": "npm run build && node scripts/local-smoke.mjs",
+    "check": "npm run lint && npm test && npm run smoke"
   },
   "engines": {
     "node": ">=22"

@@ -224,11 +224,13 @@ The normalizer is intentionally defensive: unknown entities are ignored, duplica
 
 ```bash
 npm run check
+# Or run only the built-server HTTP checks
+npm run smoke
 docker build -t linkedin-profile-api .
 docker run --rm -p 3000:3000 --env-file .env linkedin-profile-api
 ```
 
-Tests use invented response fixtures and do not contact LinkedIn. CI type-checks, runs all tests, audits production dependencies, and builds the Docker image.
+Tests use invented response fixtures and do not contact LinkedIn. `npm run check` type-checks, runs the unit/API suite, builds the production output, and exercises the built HTTP server plus its rate limiter over a real TCP socket. CI runs that complete check, audits production dependencies, and builds the Docker image.
 
 ## HTTPS deployment on Render
 

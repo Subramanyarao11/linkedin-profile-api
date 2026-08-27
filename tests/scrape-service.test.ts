@@ -36,4 +36,41 @@ describe("ScrapeService", () => {
     expect((await service.get(url, "demo-person", true)).cache).toBe("miss");
     expect(scrape).toHaveBeenCalledTimes(2);
   });
+
+  it("never exceeds the configured extraction concurrency", async () => {
+    let active = 0;
+    let maximumActive = 0;
+    const scrape = vi.fn(async () => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      active -= 1;
+      return result;
+    });
+    const service = new ScrapeService({ scrape }, 1, 0, 10);
+
+    await Promise.all([
+      service.get("https://www.linkedin.com/in/first-person/", "first-person"),
+      service.get("https://www.linkedin.com/in/second-person/", "second-person"),
+      service.get("https://www.linkedin.com/in/third-person/", "third-person")
+    ]);
+
+    expect(scrape).toHaveBeenCalledTimes(3);
+    expect(maximumActive).toBe(1);
+  });
+
+  it("releases a queue slot after an extraction failure", async () => {
+    const scrape = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("synthetic failure"))
+      .mockResolvedValueOnce(result);
+    const service = new ScrapeService({ scrape }, 1, 0, 10);
+
+    const first = service.get("https://www.linkedin.com/in/failing-person/", "failing-person");
+    const second = service.get("https://www.linkedin.com/in/demo-person/", "demo-person");
+
+    await expect(first).rejects.toThrow("synthetic failure");
+    await expect(second).resolves.toEqual({ result, cache: "miss" });
+    expect(scrape).toHaveBeenCalledTimes(2);
+  });
 });
