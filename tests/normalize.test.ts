@@ -58,6 +58,8 @@ describe("normalizeProfile", () => {
     }, "https://www.linkedin.com/in/visible-person/", "visible-person");
 
     expect(result.profile.name.full).toBe("Visible Person");
+    expect(result.profile.name.first).toBe("Visible");
+    expect(result.profile.name.last).toBe("Person");
     expect(result.profile.about).toBe("Builds useful products.");
     expect(result.profile.source.extractionMode).toEqual(["dom"]);
     expect(result.profile.source.partial).toBe(true);
@@ -147,5 +149,100 @@ describe("normalizeProfile", () => {
       name: "English",
       proficiency: "Full professional proficiency"
     }]);
+  });
+
+  it("prefers a fuller detail section over the main-page preview", () => {
+    const result = normalizeProfile([], {
+      name: "Demo Person",
+      headline: "Engineer",
+      location: null,
+      profileImage: null,
+      backgroundImage: null,
+      jsonLd: [],
+      sections: [
+        { heading: "Skills", text: "Skills TypeScript", items: [["TypeScript"]] },
+        {
+          heading: "Skills",
+          text: "Skills TypeScript API Design Distributed Systems",
+          items: [["TypeScript"], ["API Design"], ["Distributed Systems"]]
+        }
+      ]
+    }, "https://www.linkedin.com/in/demo-person/", "demo-person");
+
+    expect(result.profile.skills.map(({ name }) => name)).toEqual([
+      "TypeScript",
+      "API Design",
+      "Distributed Systems"
+    ]);
+  });
+
+  it("does not confuse the signed-in viewer with the requested profile", () => {
+    const result = normalizeProfile([{
+      included: [
+        {
+          $type: "com.linkedin.voyager.identity.shared.MiniProfile",
+          firstName: "Viewer",
+          lastName: "Account",
+          publicIdentifier: "viewer-account",
+          headline: "Viewer headline",
+          locationName: "Viewer location",
+          summary: "Viewer summary"
+        },
+        {
+          $type: "com.linkedin.voyager.identity.shared.MiniProfile",
+          firstName: "Target",
+          lastName: "Person",
+          publicIdentifier: "target-person",
+          headline: "Target headline"
+        }
+      ]
+    }], {
+      name: "Target Person",
+      headline: "Visible target headline",
+      location: "Target location",
+      profileImage: null,
+      backgroundImage: null,
+      jsonLd: [],
+      sections: []
+    }, "https://www.linkedin.com/in/target-person/", "target-person");
+
+    expect(result.profile.name.full).toBe("Target Person");
+    expect(result.profile.headline).toBe("Target headline");
+    expect(result.profile.location).toBe("Target location");
+    expect(result.profile.about).toBeNull();
+  });
+
+  it("parses education anchors from the current detail-page layout", () => {
+    const result = normalizeProfile([], {
+      name: "Demo Person",
+      headline: "Engineer",
+      location: null,
+      profileImage: null,
+      backgroundImage: null,
+      jsonLd: [],
+      sections: [{
+        heading: "Education",
+        text: "Education Example Business School Example Institute",
+        items: [],
+        links: [
+          { path: "/school/1/", text: [] },
+          { path: "/school/1/", text: ["Example Business School", "1994 – 1996"] },
+          { path: "/school/2/", text: ["Example Institute", "Bachelor’s Degree, Engineering"] }
+        ]
+      }]
+    }, "https://www.linkedin.com/in/demo-person/", "demo-person");
+
+    expect(result.profile.education).toEqual([
+      expect.objectContaining({
+        school: "Example Business School",
+        degree: null,
+        dateRange: { start: { year: 1994, month: null }, end: { year: 1996, month: null }, isCurrent: false }
+      }),
+      expect.objectContaining({
+        school: "Example Institute",
+        degree: "Bachelor’s Degree",
+        fieldOfStudy: "Engineering"
+      })
+    ]);
   });
 });

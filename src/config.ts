@@ -9,6 +9,7 @@ const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   HOST: z.string().default("0.0.0.0"),
+  API_ACCESS_MODE: z.enum(["public", "api-key"]).default("public"),
   API_KEYS: z.string().default(""),
   REQUESTS_PER_MINUTE: z.coerce.number().int().min(1).max(1000).default(10),
   LINKEDIN_LI_AT: z.string().optional(),
@@ -17,6 +18,10 @@ const schema = z.object({
   LINKEDIN_STORAGE_STATE_PATH: z.string().optional(),
   LINKEDIN_STORAGE_STATE_SEED_PATH: z.string().optional(),
   ALLOW_GUEST_MODE: booleanFromString,
+  INCLUDE_DETAIL_PAGES: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((value) => value === "true"),
   SCRAPE_TIMEOUT_MS: z.coerce.number().int().min(5000).max(120000).default(45000),
   SCRAPE_CONCURRENCY: z.coerce.number().int().min(1).max(3).default(1),
   PROFILE_CACHE_TTL_SECONDS: z.coerce.number().int().min(0).max(86400).default(900),
@@ -32,8 +37,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     .map((key) => key.trim())
     .filter(Boolean);
 
-  if (value.NODE_ENV === "production" && apiKeys.length === 0) {
-    throw new Error("API_KEYS must contain at least one key in production");
+  if (value.API_ACCESS_MODE === "api-key" && apiKeys.length === 0) {
+    throw new Error("API_KEYS must contain at least one key when API_ACCESS_MODE=api-key");
   }
 
   return {

@@ -2,26 +2,22 @@ services:
   - type: web
     name: linkedin-profile-api
     runtime: docker
-    plan: starter
+    plan: free
     region: singapore
     healthCheckPath: /health
     autoDeployTrigger: "off"
     envVars:
       - key: NODE_ENV
         value: production
-      - key: API_KEYS
-        generateValue: true
+      - key: API_ACCESS_MODE
+        value: public
       - key: LINKEDIN_STORAGE_STATE_JSON
         sync: false
-      - key: LINKEDIN_STORAGE_STATE_PATH
-        value: /var/data/storage-state.json
       - key: ALLOW_GUEST_MODE
         value: "false"
+      - key: INCLUDE_DETAIL_PAGES
+        value: "true"
       - key: SCRAPE_CONCURRENCY
         value: "1"
       - key: REQUESTS_PER_MINUTE
-        value: "10"
-    disk:
-      name: linkedin-session-state
-      mountPath: /var/data
-      sizeGB: 1
+        value: "2"

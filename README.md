@@ -1,6 +1,6 @@
 # LinkedIn Profile API
 
-A production-shaped HTTP API that accepts a LinkedIn `/in/...` profile URL and returns the profile fields visible to a LinkedIn session you control as structured JSON.
+A production-shaped HTTP API and server-rendered demo interface that accept a LinkedIn `/in/...` profile URL and return the profile fields visible to a LinkedIn session you control as structured JSON.
 
 The service opens the profile in Chromium, observes the JSON responses used by LinkedIn's own page, normalizes recognizable profile entities, and falls back to JSON-LD/visible DOM data. It does **not** bypass login, profile visibility, CAPTCHA, MFA, checkpoints, or rate limits.
 
@@ -9,6 +9,7 @@ The service opens the profile in Chromium, observes the JSON responses used by L
 
 ## What it returns
 
+- A zero-friction web form at `/` plus the JSON API and interactive OpenAPI docs
 - Name, headline, location, and about
 - Experience and education with normalized date ranges
 - Skills and endorsement counts when present
@@ -30,19 +31,25 @@ npx playwright install chromium
 cp .env.example .env
 ```
 
-Generate an API key and place it in `.env`:
+The assignment demo is public by default, so callers do not need an API key. To protect a private deployment instead, set `API_ACCESS_MODE=api-key`, generate a key, and place it in `.env`:
 
 ```bash
 openssl rand -hex 32
 ```
 
-Set `API_KEYS` to that generated value. Then configure a LinkedIn session using one of the methods below and run:
+Set `API_KEYS` to that generated value only in API-key mode. Then configure a LinkedIn session using one of the methods below and run:
 
 ```bash
 npm run dev
 ```
 
-Open `http://localhost:3000/docs` for interactive OpenAPI documentation or `http://localhost:3000/health` for health status.
+Open `http://localhost:3000/` for the profile form, `http://localhost:3000/docs` for interactive OpenAPI documentation, or `http://localhost:3000/health` for health status.
+
+## Evaluator workflow
+
+The public assignment deployment asks the evaluator for exactly one value: a LinkedIn profile URL. They can paste it into `/` or call the endpoint directly. LinkedIn credentials remain exclusively in the backend.
+
+For private reuse, change `API_ACCESS_MODE` to `api-key`; the same landing form then displays an API-key field and the OpenAPI operation documents the `x-api-key` requirement.
 
 ## Configure the LinkedIn session
 
@@ -80,8 +87,9 @@ Headers:
 
 ```text
 content-type: application/json
-x-api-key: <one of API_KEYS>
 ```
+
+Add `x-api-key: <one of API_KEYS>` only when `API_ACCESS_MODE=api-key`.
 
 Request:
 
@@ -94,12 +102,13 @@ Request:
 
 `url` must be an HTTPS LinkedIn `/in/{publicIdentifier}` URL. Host and path validation prevent the browser from being used for SSRF. `refresh: true` bypasses a successful cached result.
 
+For account safety, `refresh` is honored only in API-key mode. Public callers always receive a valid cached result when one exists.
+
 Example:
 
 ```bash
 curl --request POST 'http://localhost:3000/v1/profiles' \
   --header 'content-type: application/json' \
-  --header 'x-api-key: replace-with-your-key' \
   --data '{"url":"https://www.linkedin.com/in/satyanadella/"}'
 ```
 
@@ -175,7 +184,7 @@ All application errors use the same shape:
 | Status | Typical codes |
 | --- | --- |
 | `400` | `invalid_request`, `invalid_profile_url` |
-| `401` | `unauthorized` |
+| `401` | `unauthorized` (API-key mode only) |
 | `404` | `profile_not_found` |
 | `429` | `rate_limit_exceeded` |
 | `502` | `profile_unavailable`, `extraction_failed` |
@@ -197,8 +206,8 @@ Returns process health and whether session material was configured. It never val
 
 1. The input parser accepts only `https://*.linkedin.com/in/{id}` and canonicalizes it to `www.linkedin.com`.
 2. One isolated browser context receives session state from environment variables and remains alive for the process lifetime. Individual requests use fresh pages while LinkedIn cookie rotations remain in the shared context. With `LINKEDIN_STORAGE_STATE_PATH`, a successful non-challenged load also persists rotated state for the next restart.
-3. Playwright loads and scrolls the profile while collecting JSON responses from LinkedIn's first-party `voyager/api` and GraphQL requests. It does not call guessed endpoints or replay hidden requests.
-4. The normalizer detects profile, position, education, skill, certification, language, and vector-image entity shapes. JSON-LD and visible DOM fields fill basic gaps.
+3. Playwright loads and scrolls the profile while collecting JSON responses from LinkedIn's first-party `voyager/api` and GraphQL requests. When enabled, it then visits LinkedIn's standard visible experience, education, skills, certifications, and languages detail pages sequentially. It does not replay hidden requests or bypass access controls.
+4. The normalizer detects profile, position, education, skill, certification, language, and vector-image entity shapes. JSON-LD and visible DOM fields fill gaps, and target-identity matching prevents navigation data for the signed-in viewer from overriding the requested profile.
 5. Results are cached in memory. A small FIFO semaphore limits concurrent browser contexts for account safety and predictable memory use.
 
 The normalizer is intentionally defensive: unknown entities are ignored, duplicate entries are collapsed, absent dates remain `null`, and sparse responses include warnings with `source.partial: true`.
@@ -209,7 +218,8 @@ The normalizer is intentionally defensive: unknown entities are ignored, duplica
 | --- | --- | --- |
 | `PORT` | `3000` | HTTP port assigned by the platform |
 | `HOST` | `0.0.0.0` | Bind address |
-| `NODE_ENV` | `development` | `production` requires `API_KEYS` |
+| `NODE_ENV` | `development` | Runtime environment |
+| `API_ACCESS_MODE` | `public` | `public` for URL-only access or `api-key` for protected access |
 | `API_KEYS` | empty | Comma-separated accepted API keys |
 | `LINKEDIN_STORAGE_STATE_JSON` | empty | One-line Playwright storage state |
 | `LINKEDIN_STORAGE_STATE_PATH` | empty | Local path to a Playwright storage-state file |
@@ -217,7 +227,8 @@ The normalizer is intentionally defensive: unknown entities are ignored, duplica
 | `LINKEDIN_LI_AT` | empty | LinkedIn session cookie |
 | `LINKEDIN_JSESSIONID` | empty | Optional LinkedIn CSRF/session cookie |
 | `ALLOW_GUEST_MODE` | `false` | Permit extraction with no session |
-| `REQUESTS_PER_MINUTE` | `10` | Per-IP request limit |
+| `INCLUDE_DETAIL_PAGES` | `true` | Visit standard visible detail pages for fuller results |
+| `REQUESTS_PER_MINUTE` | `10` | Per-IP profile-request limit; docs and health are excluded |
 | `SCRAPE_TIMEOUT_MS` | `45000` | Page navigation timeout |
 | `SCRAPE_CONCURRENCY` | `1` | Concurrent browser contexts (max `3`) |
 | `PROFILE_CACHE_TTL_SECONDS` | `900` | Successful-result TTL; `0` disables cache |
@@ -238,18 +249,18 @@ Tests use invented response fixtures and do not contact LinkedIn. `npm run check
 
 ## HTTPS deployment on Render
 
-The included `render.yaml` deploys the Docker image in Render's Singapore region as a paid Starter web service with HTTPS, a generated API key, health checks, and a 1 GB persistent disk. Render services otherwise use an ephemeral filesystem, so the disk preserves LinkedIn's rotated session across restarts. Change the region in the Blueprint before creation if Singapore is not appropriate for your deployment.
+The included `render.yaml` deploys the Docker image in Render's Singapore region as a Free web service with managed HTTPS, URL-only public access, strict per-IP request limits, one-at-a-time extraction, and health checks. Change the region in the Blueprint before creation if Singapore is not appropriate for your deployment.
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Subramanyarao11/linkedin-profile-api)
 
-1. Click **Deploy to Render**, review the paid Starter service and persistent-disk cost, and create the Blueprint.
+1. Suspend unused Free services if necessary, click **Deploy to Render**, and create the Free Blueprint.
 2. When prompted, set `LINKEDIN_STORAGE_STATE_JSON` to the one-line output of `jq -c . storage-state.json`. Do not put its value in `render.yaml`.
-3. Copy the generated `API_KEYS` value from the secret manager for API clients.
-4. Call `https://<service-name>.onrender.com/health`, then test `POST /v1/profiles` with `x-api-key`.
+3. Open `https://<service-name>.onrender.com/`, paste a profile URL, and verify the rendered result.
+4. Call `https://<service-name>.onrender.com/health`, then test the URL-only `POST /v1/profiles` endpoint or `/docs`.
 
-On its first valid profile load, the service writes rotated state to `/var/data/storage-state.json`; later restarts prefer that persisted copy over the original JSON seed. As an alternative to the JSON environment variable, upload `storage-state.json` as a Render secret file, set `LINKEDIN_STORAGE_STATE_SEED_PATH=/etc/secrets/storage-state.json`, and leave the JSON value unset.
+Free services have an ephemeral filesystem and spin down when idle, so each new instance starts from the encrypted JSON seed. Cookie changes remain in the shared browser context while that instance is alive, but are lost on restart. If the seed stops authenticating, recapture it locally and replace the Render secret. For a more durable private deployment, upgrade to a paid instance, attach a persistent disk, and point `LINKEDIN_STORAGE_STATE_PATH` at that disk.
 
-`autoDeploy` is off to avoid replacing a stable scraper automatically when a dependency or profile shape changes. Deploy reviewed commits manually.
+Automatic deploys are disabled to avoid replacing a stable scraper when a dependency or profile shape changes. Deploy reviewed commits manually.
 
 The Docker image also runs on Fly.io, Railway, Cloud Run, ECS/Fargate, or any container platform with at least roughly 1 GB RAM, outbound HTTPS, encrypted secrets, and a platform TLS endpoint.
 
@@ -258,10 +269,12 @@ The Docker image also runs on Fly.io, Railway, Cloud Run, ECS/Fargate, or any co
 - LinkedIn's page response schemas and DOM are undocumented and can change without notice. Fixture tests detect regressions only after a new shape is added.
 - Results depend on what the configured account can see, the profile owner's privacy settings, account locale, experiments, and which sections the page loads. Hidden data is not accessible.
 - Sessions expire and may trigger a checkpoint. The API returns `authentication_required` or `challenge_required`; it intentionally does not solve CAPTCHA/MFA or automate challenge recovery.
+- Standard detail pages add sequential page loads and response time. Set `INCLUDE_DETAIL_PAGES=false` when lower latency is more important than completeness.
+- A Free Render instance can take about a minute to wake after idling and does not preserve rotated session state across restarts.
 - A successful sparse extraction returns HTTP `200` with `source.partial: true` and human-readable `meta.warnings`.
 - Image URLs may be resized, signed, or temporary. Store them only if your use and LinkedIn's terms permit it.
 - The cache is per process. Multiple replicas need a shared cache and distributed concurrency/rate limits before they should share one LinkedIn account.
-- Running a public scraper can expose the backing account to abuse. Keep API-key auth enabled, use strict quotas, monitor logs, and rotate both API and LinkedIn session secrets.
+- Running a public scraper can expose the backing account to abuse. The assignment configuration disables public cache bypass, limits requests per IP, and serializes extraction; use API-key mode and stronger external quotas for any long-lived deployment.
 - This implementation makes no guarantee of continuous LinkedIn compatibility or suitability for bulk collection.
 
 ## Repository structure
@@ -270,6 +283,7 @@ The Docker image also runs on Fly.io, Railway, Cloud Run, ECS/Fargate, or any co
 src/
   app.ts                    Fastify routes, OpenAPI, auth, rate limiting
   config.ts                 Validated environment configuration
+  ui.ts                     Server-rendered evaluator interface
   extractor/browser.ts      Authenticated browser and response capture
   extractor/normalize.ts    LinkedIn entity-to-schema normalization
   profile-url.ts            Strict URL canonicalization / SSRF guard

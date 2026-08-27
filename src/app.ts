@@ -8,6 +8,7 @@ import type { AppConfig } from "./config.js";
 import { ScrapeError } from "./errors.js";
 import { InvalidProfileUrlError, normalizeLinkedInProfileUrl } from "./profile-url.js";
 import type { ScrapeService } from "./scrape-service.js";
+import { profileUiHtml } from "./ui.js";
 
 const profileRequestSchema = {
   type: "object",
@@ -169,6 +170,7 @@ function keyMatches(provided: string, expected: string): boolean {
 }
 
 export async function buildApp(config: AppConfig, service: ScrapeService): Promise<FastifyInstance> {
+  const apiKeyRequired = config.API_ACCESS_MODE === "api-key";
   const app = Fastify({
     logger: config.NODE_ENV === "test" ? false : { level: config.LOG_LEVEL },
     trustProxy: true,
@@ -178,9 +180,7 @@ export async function buildApp(config: AppConfig, service: ScrapeService): Promi
 
   await app.register(helmet, { contentSecurityPolicy: false });
   await app.register(rateLimit, {
-    max: config.REQUESTS_PER_MINUTE,
-    timeWindow: "1 minute",
-    keyGenerator: (request) => request.ip
+    global: false
   });
   await app.register(swagger, {
     openapi: {
@@ -189,11 +189,15 @@ export async function buildApp(config: AppConfig, service: ScrapeService): Promi
         version: "1.0.0",
         description: "Extracts structured fields from a LinkedIn profile visible to the configured session."
       },
-      components: {
-        securitySchemes: {
-          apiKey: { type: "apiKey", in: "header", name: "x-api-key" }
-        }
-      }
+      ...(apiKeyRequired
+        ? {
+            components: {
+              securitySchemes: {
+                apiKey: { type: "apiKey" as const, in: "header" as const, name: "x-api-key" }
+              }
+            }
+          }
+        : {})
     }
   });
   await app.register(swaggerUi, { routePrefix: "/docs" });
@@ -216,6 +220,13 @@ export async function buildApp(config: AppConfig, service: ScrapeService): Promi
     });
   });
 
+  app.get("/", {
+    schema: {
+      hide: true,
+      response: { 200: { type: "string" } }
+    }
+  }, async (_request, reply) => reply.type("text/html; charset=utf-8").send(profileUiHtml(apiKeyRequired)));
+
   app.get("/health", {
     schema: {
       tags: ["system"],
@@ -232,8 +243,14 @@ export async function buildApp(config: AppConfig, service: ScrapeService): Promi
   }, async () => ({ status: "ok", linkedInSessionConfigured: config.hasLinkedInSession }));
 
   app.post<{ Body: { url: string; refresh?: boolean } }>("/v1/profiles", {
+    config: {
+      rateLimit: {
+        max: config.REQUESTS_PER_MINUTE,
+        timeWindow: "1 minute"
+      }
+    },
     preHandler: async (request, reply) => {
-      if (config.apiKeys.length === 0) return;
+      if (!apiKeyRequired) return;
       const header = request.headers["x-api-key"];
       const provided = Array.isArray(header) ? header[0] : header;
       if (!provided || !config.apiKeys.some((expected) => keyMatches(provided, expected))) {
@@ -245,7 +262,7 @@ export async function buildApp(config: AppConfig, service: ScrapeService): Promi
     schema: {
       tags: ["profiles"],
       summary: "Extract a LinkedIn profile",
-      security: [{ apiKey: [] }],
+      ...(apiKeyRequired ? { security: [{ apiKey: [] }] } : {}),
       body: profileRequestSchema,
       response: {
         200: profileResponseSchema,
@@ -266,7 +283,7 @@ export async function buildApp(config: AppConfig, service: ScrapeService): Promi
       const { result, cache } = await service.get(
         normalized.url,
         normalized.publicIdentifier,
-        request.body.refresh ?? false
+        apiKeyRequired ? request.body.refresh ?? false : false
       );
       return {
         data: result.profile,

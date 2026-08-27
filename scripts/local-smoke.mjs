@@ -5,6 +5,7 @@ import { ScrapeError } from "../dist/errors.js";
 
 const config = loadConfig({
   NODE_ENV: "production",
+  API_ACCESS_MODE: "api-key",
   API_KEYS: "smoke-key-one,smoke-key-two",
   REQUESTS_PER_MINUTE: "100",
   LOG_LEVEL: "silent"
@@ -59,6 +60,11 @@ async function runMainChecks() {
     });
 
   try {
+    const landing = await request("/");
+    assert.equal(landing.status, 200); assertions += 1;
+    assert.match(landing.contentType, /text\/html/); assertions += 1;
+    assert.match(landing.body, /One profile URL\. Clean JSON\./); assertions += 1;
+
     const health = await request("/health");
     assert.equal(health.status, 200); assertions += 1;
     assert.deepEqual(health.body, { status: "ok", linkedInSessionConfigured: false }); assertions += 1;
@@ -109,6 +115,7 @@ async function runMainChecks() {
 async function runRateLimitCheck() {
   const limitedConfig = loadConfig({
     NODE_ENV: "production",
+    API_ACCESS_MODE: "api-key",
     API_KEYS: "rate-key",
     REQUESTS_PER_MINUTE: "2",
     LOG_LEVEL: "silent"
@@ -119,10 +126,14 @@ async function runRateLimitCheck() {
   try {
     const responses = [];
     for (let index = 0; index < 3; index += 1) {
-      const response = await fetch(`${base}/health`);
+      const response = await fetch(`${base}/v1/profiles`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-api-key": "rate-key" },
+        body: JSON.stringify({ url: "https://www.linkedin.com/in/demo-person/" })
+      });
       responses.push({ status: response.status, body: await read(response) });
     }
-    assert.deepEqual(responses.map(({ status }) => status), [200, 200, 429]);
+    assert.deepEqual(responses.map(({ status }) => status), [503, 503, 429]);
     assert.equal(responses[2].body.error.code, "rate_limit_exceeded");
     return 2;
   } finally {

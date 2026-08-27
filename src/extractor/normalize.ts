@@ -143,7 +143,13 @@ function cleanSectionHeading(value: string): string {
 }
 
 function domSection(snapshot: DomSnapshot | undefined, heading: string) {
-  return snapshot?.sections.find((section) => cleanSectionHeading(section.heading).includes(heading));
+  return snapshot?.sections
+    .filter((section) => cleanSectionHeading(section.heading).includes(heading))
+    .sort((left, right) => {
+      const score = (section: DomSnapshot["sections"][number]) =>
+        (section.links?.length ?? 0) * 4 + section.items.length * 3 + section.text.length / 100;
+      return score(right) - score(left);
+    })[0];
 }
 
 const monthNumbers: Record<string, number> = {
@@ -226,7 +232,11 @@ function domEducations(snapshot: DomSnapshot | undefined): Education[] {
   if (!section?.links) return [];
   return section.links.flatMap((link): Education[] => {
     if (!link.path?.startsWith("/school/") || !link.text[0]) return [];
-    const [school, degreeLine, dates, ...remaining] = link.text;
+    const [school, ...details] = link.text;
+    const dateIndex = details.findIndex((line) => domDateRange(line) !== null);
+    const dates = dateIndex >= 0 ? details[dateIndex] : undefined;
+    const degreeLine = details.find((_line, index) => index !== dateIndex);
+    const remaining = details.filter((line, index) => index !== dateIndex && line !== degreeLine);
     const degreeParts = degreeLine?.split(",").map((part) => part.trim()).filter(Boolean) ?? [];
     return [{
       school,
@@ -242,7 +252,13 @@ function domEducations(snapshot: DomSnapshot | undefined): Education[] {
 
 function domItems(snapshot: DomSnapshot | undefined, heading: string): string[][] {
   const section = domSection(snapshot, heading);
-  return (section?.items ?? []).filter((item) => item.length && item[0] !== section?.heading);
+  if (!section) return [];
+  return dedupe(
+    [...section.items, ...(section.links ?? []).map((link) => link.text)].filter(
+      (item) => item.length && cleanSectionHeading(item[0] ?? "") !== cleanSectionHeading(section.heading)
+    ),
+    (item) => item.join("|")
+  );
 }
 
 function profileScore(object: AnyRecord): number {
@@ -252,6 +268,18 @@ function profileScore(object: AnyRecord): number {
   );
 }
 
+function normalizedIdentity(value: string | null): string {
+  return (value ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function candidateName(object: AnyRecord): string | null {
+  const direct = firstString(object, ["name", "formattedName"]);
+  if (direct) return direct;
+  const first = firstString(object, ["firstName", "givenName"]);
+  const last = firstString(object, ["lastName", "familyName"]);
+  return [first, last].filter(Boolean).join(" ") || null;
+}
+
 export function normalizeProfile(
   payloads: unknown[],
   snapshot: DomSnapshot | undefined,
@@ -259,9 +287,20 @@ export function normalizeProfile(
   publicIdentifier: string
 ): ScrapeResult {
   const objects = collectObjects([...payloads, ...(snapshot?.jsonLd ?? [])]);
-  const profileCandidate = objects
+  const profileCandidates = objects
     .filter(({ value }) => profileScore(value) >= 2)
-    .sort((a, b) => profileScore(b.value) - profileScore(a.value))[0]?.value;
+    .sort((a, b) => profileScore(b.value) - profileScore(a.value));
+  const targetIdentifier = normalizedIdentity(publicIdentifier);
+  const targetName = normalizedIdentity(snapshot?.name ?? null);
+  const profileCandidate =
+    profileCandidates.find(({ value }) =>
+      targetIdentifier ===
+      normalizedIdentity(firstString(value, ["publicIdentifier", "vanityName", "profilePublicIdentifier"]))
+    )?.value ??
+    profileCandidates.find(({ value }) =>
+      Boolean(targetName) && targetName === normalizedIdentity(candidateName(value))
+    )?.value ??
+    (snapshot?.name ? undefined : profileCandidates[0]?.value);
 
   const firstName = profileCandidate ? firstString(profileCandidate, ["firstName", "givenName"]) : null;
   const lastName = profileCandidate ? firstString(profileCandidate, ["lastName", "familyName"]) : null;
@@ -269,6 +308,10 @@ export function normalizeProfile(
     snapshot?.name ??
     (profileCandidate ? firstString(profileCandidate, ["name", "formattedName"]) : null) ??
     ([firstName, lastName].filter(Boolean).join(" ") || null);
+  const visibleNameParts = fullName?.split(/\s+/).filter(Boolean) ?? [];
+  const resolvedFirstName = firstName ?? visibleNameParts[0] ?? null;
+  const resolvedLastName =
+    lastName ?? (visibleNameParts.length > 1 ? visibleNameParts[visibleNameParts.length - 1] ?? null : null);
 
   const experiences: Experience[] = [];
   const educations: Education[] = [];
@@ -278,16 +321,14 @@ export function normalizeProfile(
   let profileImage = snapshot?.profileImage ?? null;
   let backgroundImage = snapshot?.backgroundImage ?? null;
 
+  if (profileCandidate) {
+    profileImage ??= findImage(profileCandidate, ["profilePicture", "picture", "displayImage", "image"]);
+    backgroundImage ??= findImage(profileCandidate, ["backgroundPicture", "backgroundImage", "coverImage"]);
+  }
+
   for (const located of objects) {
     const object = located.value;
     const hint = objectHint(located);
-
-    if (!profileImage && (hint.includes("profile") || hint.includes("picture"))) {
-      profileImage = findImage(object, ["profilePicture", "picture", "displayImage", "image"]);
-    }
-    if (!backgroundImage && (hint.includes("background") || hint.includes("cover"))) {
-      backgroundImage = findImage(object, ["backgroundPicture", "backgroundImage", "coverImage", "image"]);
-    }
 
     const title = firstString(object, ["title", "positionTitle"]);
     const company = firstString(object, ["companyName", "company"]);
@@ -381,7 +422,7 @@ export function normalizeProfile(
       extractionMode,
       partial: false
     },
-    name: { full: fullName, first: firstName, last: lastName },
+    name: { full: fullName, first: resolvedFirstName, last: resolvedLastName },
     headline:
       (profileCandidate ? firstString(profileCandidate, ["headline", "occupation", "jobTitle"]) : null) ??
       snapshot?.headline ??
@@ -406,6 +447,9 @@ export function normalizeProfile(
   if (!payloads.length) warnings.push("No LinkedIn JSON responses were captured; the result uses page fallbacks only.");
   if (!profile.experience.length) warnings.push("No experience entries were available or recognized.");
   if (!profile.education.length) warnings.push("No education entries were available or recognized.");
+  if (!profile.skills.length) warnings.push("No skills were available or recognized.");
+  if (!profile.certifications.length) warnings.push("No certifications were available or recognized.");
+  if (!profile.languages.length) warnings.push("No languages were available or recognized.");
   profile.source.partial = warnings.length > 0;
 
   return { profile, warnings };

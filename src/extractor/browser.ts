@@ -14,6 +14,85 @@ import { classifyBlockedPage } from "./page-state.js";
 
 const NETWORK_PAYLOAD_LIMIT = 150;
 const NETWORK_BODY_LIMIT_BYTES = 8 * 1024 * 1024;
+const PROFILE_DETAIL_SECTIONS = [
+  { label: "experience", path: "experience" },
+  { label: "education", path: "education" },
+  { label: "skills", path: "skills" },
+  { label: "certifications", path: "certifications" },
+  { label: "languages", path: "languages" }
+] as const;
+const DOM_SNAPSHOT_SCRIPT = String.raw`(() => {
+  const text = (element) => {
+    const value = element?.textContent?.replace(/\s+/g, " ").trim();
+    return value || null;
+  };
+  const lines = (element) =>
+    ((element instanceof HTMLElement ? element.innerText : element.textContent) || "")
+      .split("\n")
+      .map((line) => line.replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+  const jsonLd = Array.from(document.querySelectorAll('script[type="application/ld+json"]')).flatMap(
+    (script) => {
+      try {
+        const parsed = JSON.parse(script.textContent || "null");
+        return Array.isArray(parsed) ? parsed : [parsed];
+      } catch {
+        return [];
+      }
+    }
+  );
+  const h1 = document.querySelector("main h1, h1");
+  const titleMatch = document.title.match(/^(.+?)\s*\|\s*LinkedIn$/i);
+  const titleName = titleMatch?.[1]?.trim() || null;
+  const h1Text = text(h1) || titleName;
+  const profileImage = Array.from(document.querySelectorAll("main img")).find((image) => {
+    const source = image.src || "";
+    const alt = image.alt || "";
+    if (/profile-background|background/i.test(source + " " + alt)) return false;
+    return source.includes("profile-displayphoto") || Boolean(h1Text && alt.toLowerCase().includes(h1Text.toLowerCase()));
+  });
+  const backgroundImage = document.querySelector(
+    'main img[alt*="background" i], main img[src*="profile-background"]'
+  );
+  const h1Parent = h1?.parentElement;
+  const nearby = h1Parent ? Array.from(h1Parent.querySelectorAll(":scope > div, :scope > span")) : [];
+  const nearbyText = nearby.map((element) => text(element)).filter(Boolean);
+  const sections = Array.from(document.querySelectorAll("main section")).map((section) => {
+    const sectionLines = lines(section);
+    const firstLine = sectionLines[0] || "";
+    const semanticFirstLine = /^(about|experience|education|skills|licenses\s*&\s*certifications|certifications|languages)$/i.test(firstLine);
+    const heading = semanticFirstLine ? firstLine : text(section.querySelector("h2, h3")) || firstLine;
+    const items = Array.from(section.querySelectorAll(":scope li")).map(lines);
+    const links = Array.from(section.querySelectorAll("a")).map((anchor) => {
+      let path = null;
+      try {
+        const url = new URL(anchor.href);
+        if (url.hostname === "linkedin.com" || url.hostname.endsWith(".linkedin.com")) path = url.pathname;
+      } catch {
+        // Ignore malformed/non-HTTP link targets.
+      }
+      return { text: lines(anchor), path };
+    });
+    return { heading, text: text(section) || "", items, lines: sectionLines, links };
+  });
+  return {
+    name: text(h1) || titleName,
+    headline: nearbyText.find((value) => value !== text(h1) && value.length > 5) || null,
+    location: nearbyText.find((value) => /,| area$| region$/i.test(value)) || null,
+    profileImage: profileImage?.src || null,
+    backgroundImage: backgroundImage?.src || null,
+    jsonLd,
+    sections
+  };
+})()`;
+
+export function mergeDomSnapshots(primary: DomSnapshot, details: DomSnapshot[]): DomSnapshot {
+  return {
+    ...primary,
+    jsonLd: [primary, ...details].flatMap((snapshot) => snapshot.jsonLd),
+    sections: [primary, ...details].flatMap((snapshot) => snapshot.sections)
+  };
+}
 
 export function resolveStorageState(config: AppConfig): BrowserContextOptions["storageState"] {
   if (config.LINKEDIN_STORAGE_STATE_PATH && existsSync(config.LINKEDIN_STORAGE_STATE_PATH)) {
@@ -57,10 +136,14 @@ export class LinkedInBrowserExtractor {
   constructor(private readonly config: AppConfig) {}
 
   async close(): Promise<void> {
-    await this.context?.close();
+    await this.context?.close().catch(() => {
+      // The browser process may already be gone during a development watcher restart.
+    });
     this.context = undefined;
     this.contextPromise = undefined;
-    await this.browser?.close();
+    await this.browser?.close().catch(() => {
+      // Closing is best-effort and must remain idempotent during shutdown.
+    });
     this.browser = undefined;
   }
 
@@ -120,12 +203,20 @@ export class LinkedInBrowserExtractor {
         throw error;
       }
       await this.detectBlockedPage(page);
+      const mainSnapshot = await this.snapshotDom(page);
+      const detailResult = this.config.INCLUDE_DETAIL_PAGES
+        ? await this.loadDetailPages(page, profileUrl)
+        : { snapshots: [], warnings: [] };
       await Promise.allSettled([...pendingPayloads]);
       if (this.config.LINKEDIN_STORAGE_STATE_PATH) {
         await context.storageState({ path: this.config.LINKEDIN_STORAGE_STATE_PATH });
       }
-      const snapshot = await this.snapshotDom(page);
+      const snapshot = mergeDomSnapshots(mainSnapshot, detailResult.snapshots);
       const result = normalizeProfile(payloads, snapshot, profileUrl, publicIdentifier);
+      if (detailResult.warnings.length) {
+        result.warnings.push(...detailResult.warnings);
+        result.profile.source.partial = true;
+      }
 
       if (!result.profile.name.full && !result.profile.headline) {
         throw new ScrapeError(
@@ -231,65 +322,42 @@ export class LinkedInBrowserExtractor {
     await page.waitForTimeout(300);
   }
 
-  private async snapshotDom(page: Page): Promise<DomSnapshot> {
-    return page.evaluate(() => {
-      const text = (element: Element | null): string | null => {
-        const value = element?.textContent?.replace(/\s+/g, " ").trim();
-        return value || null;
-      };
-      const lines = (element: Element): string[] =>
-        ((element as HTMLElement).innerText ?? element.textContent ?? "")
-          .split("\n")
-          .map((line) => line.replace(/\s+/g, " ").trim())
-          .filter(Boolean);
-      const jsonLd = Array.from(document.querySelectorAll('script[type="application/ld+json"]')).flatMap(
-        (script): unknown[] => {
-          try {
-            const parsed = JSON.parse(script.textContent ?? "null") as unknown;
-            return Array.isArray(parsed) ? parsed : [parsed];
-          } catch {
-            return [];
-          }
-        }
-      );
-      const h1 = document.querySelector("main h1, h1");
-      const titleName = document.title.match(/^(.+?)\s*\|\s*LinkedIn$/i)?.[1]?.trim() ?? null;
-      const profileImage = document.querySelector<HTMLImageElement>(
-        'main img[alt*="profile" i], main img[alt*="photo" i], main img[src*="profile-displayphoto"]'
-      );
-      const backgroundImage = document.querySelector<HTMLImageElement>(
-        'main img[alt*="background" i], main img[src*="profile-background"]'
-      );
-      const h1Parent = h1?.parentElement;
-      const nearby = h1Parent ? Array.from(h1Parent.querySelectorAll(":scope > div, :scope > span")) : [];
-      const nearbyText = nearby.map((element) => text(element)).filter((value): value is string => Boolean(value));
+  private async loadDetailPages(
+    page: Page,
+    profileUrl: string
+  ): Promise<{ snapshots: DomSnapshot[]; warnings: string[] }> {
+    const snapshots: DomSnapshot[] = [];
+    const warnings: string[] = [];
 
-      const sections = Array.from(document.querySelectorAll("main section")).map((section) => {
-        const heading = text(section.querySelector("h2, h3")) ?? "";
-        const items = Array.from(section.querySelectorAll(":scope li")).map(lines);
-        const sectionLines = lines(section);
-        const links = Array.from(section.querySelectorAll("a")).map((anchor) => {
-          let path: string | null = null;
-          try {
-            const url = new URL((anchor as HTMLAnchorElement).href);
-            if (url.hostname === "linkedin.com" || url.hostname.endsWith(".linkedin.com")) path = url.pathname;
-          } catch {
-            // Ignore malformed/non-HTTP link targets.
-          }
-          return { text: lines(anchor), path };
+    for (const detail of PROFILE_DETAIL_SECTIONS) {
+      const detailUrl = new URL(`details/${detail.path}/`, profileUrl).href;
+      try {
+        const response = await page.goto(detailUrl, {
+          waitUntil: "domcontentloaded",
+          timeout: this.config.SCRAPE_TIMEOUT_MS
         });
-        return { heading, text: text(section) ?? "", items, lines: sectionLines, links };
-      });
+        if (response?.status() === 404) continue;
+        if (response?.status() === 999) {
+          throw new ScrapeError(
+            "profile_unavailable",
+            "LinkedIn rejected a profile detail request (HTTP 999).",
+            502
+          );
+        }
+        await this.detectBlockedPage(page);
+        await this.loadVisibleSections(page);
+        await this.detectBlockedPage(page);
+        snapshots.push(await this.snapshotDom(page));
+      } catch (error) {
+        if (error instanceof ScrapeError) throw error;
+        warnings.push(`The ${detail.label} detail page could not be loaded.`);
+      }
+    }
 
-      return {
-        name: text(h1) ?? titleName,
-        headline: nearbyText.find((value) => value !== text(h1) && value.length > 5) ?? null,
-        location: nearbyText.find((value) => /,| area$| region$/i.test(value)) ?? null,
-        profileImage: profileImage?.src ?? null,
-        backgroundImage: backgroundImage?.src ?? null,
-        jsonLd,
-        sections
-      };
-    });
+    return { snapshots, warnings };
+  }
+
+  private async snapshotDom(page: Page): Promise<DomSnapshot> {
+    return page.evaluate<DomSnapshot>(DOM_SNAPSHOT_SCRIPT);
   }
 }
