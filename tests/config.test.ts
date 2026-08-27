@@ -18,4 +18,14 @@ describe("loadConfig", () => {
     expect(config.apiKeys).toEqual(["first-key", "second-key"]);
     expect(config.hasLinkedInSession).toBe(true);
   });
+
+  it("recognizes a local Playwright storage-state path as a session", () => {
+    const config = loadConfig({
+      NODE_ENV: "development",
+      LINKEDIN_STORAGE_STATE_PATH: "storage-state.json"
+    });
+
+    expect(config.hasLinkedInSession).toBe(true);
+    expect(config.LINKEDIN_STORAGE_STATE_PATH).toBe("storage-state.json");
+  });
 });

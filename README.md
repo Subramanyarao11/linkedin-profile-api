@@ -56,11 +56,13 @@ Capture a session interactively on your own machine:
 npx playwright codegen --save-storage=storage-state.json https://www.linkedin.com/login
 ```
 
-Sign in in the opened browser and close it after LinkedIn finishes loading. `storage-state.json` is gitignored. Convert it to one line and put the result in `LINKEDIN_STORAGE_STATE_JSON`:
+Sign in in the opened browser and close it after LinkedIn finishes loading. `storage-state.json` is gitignored. For local testing, put its path in `.env`:
 
-```bash
-jq -c . storage-state.json
+```dotenv
+LINKEDIN_STORAGE_STATE_PATH=storage-state.json
 ```
+
+For a remote host that cannot mount the file, convert it to one line with `jq -c . storage-state.json` and store the result as the encrypted `LINKEDIN_STORAGE_STATE_JSON` secret.
 
 ### Option B: Session cookies
 
@@ -210,6 +212,7 @@ The normalizer is intentionally defensive: unknown entities are ignored, duplica
 | `NODE_ENV` | `development` | `production` requires `API_KEYS` |
 | `API_KEYS` | empty | Comma-separated accepted API keys |
 | `LINKEDIN_STORAGE_STATE_JSON` | empty | One-line Playwright storage state |
+| `LINKEDIN_STORAGE_STATE_PATH` | empty | Local path to a Playwright storage-state file |
 | `LINKEDIN_LI_AT` | empty | LinkedIn session cookie |
 | `LINKEDIN_JSESSIONID` | empty | Optional LinkedIn CSRF/session cookie |
 | `ALLOW_GUEST_MODE` | `false` | Permit extraction with no session |

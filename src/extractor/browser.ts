@@ -27,7 +27,7 @@ export class LinkedInBrowserExtractor {
     if (!this.config.hasLinkedInSession && !this.config.ALLOW_GUEST_MODE) {
       throw new ScrapeError(
         "authentication_required",
-        "No LinkedIn session is configured. Set LINKEDIN_LI_AT or LINKEDIN_STORAGE_STATE_JSON.",
+        "No LinkedIn session is configured. Set LINKEDIN_STORAGE_STATE_PATH, LINKEDIN_STORAGE_STATE_JSON, or LINKEDIN_LI_AT.",
         503
       );
     }
@@ -117,6 +117,8 @@ export class LinkedInBrowserExtractor {
           503
         );
       }
+    } else if (this.config.LINKEDIN_STORAGE_STATE_PATH) {
+      storageState = this.config.LINKEDIN_STORAGE_STATE_PATH;
     }
 
     const context = await browser.newContext({
