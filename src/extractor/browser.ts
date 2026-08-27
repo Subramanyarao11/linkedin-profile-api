@@ -16,10 +16,15 @@ const NETWORK_BODY_LIMIT_BYTES = 8 * 1024 * 1024;
 
 export class LinkedInBrowserExtractor {
   private browser: Browser | undefined;
+  private context: BrowserContext | undefined;
+  private contextPromise: Promise<BrowserContext> | undefined;
 
   constructor(private readonly config: AppConfig) {}
 
   async close(): Promise<void> {
+    await this.context?.close();
+    this.context = undefined;
+    this.contextPromise = undefined;
     await this.browser?.close();
     this.browser = undefined;
   }
@@ -34,7 +39,7 @@ export class LinkedInBrowserExtractor {
     }
 
     const browser = await this.getBrowser();
-    const context = await this.createContext(browser);
+    const context = await this.getContext(browser);
     const page = await context.newPage();
     const payloads: unknown[] = [];
     const pendingPayloads = new Set<Promise<void>>();
@@ -81,6 +86,9 @@ export class LinkedInBrowserExtractor {
       }
       await this.detectBlockedPage(page);
       await Promise.allSettled([...pendingPayloads]);
+      if (this.config.LINKEDIN_STORAGE_STATE_PATH) {
+        await context.storageState({ path: this.config.LINKEDIN_STORAGE_STATE_PATH });
+      }
       const snapshot = await this.snapshotDom(page);
       const result = normalizeProfile(payloads, snapshot, profileUrl, publicIdentifier);
 
@@ -103,18 +111,35 @@ export class LinkedInBrowserExtractor {
         502
       );
     } finally {
-      await context.close();
+      await page.close();
     }
   }
 
   private async getBrowser(): Promise<Browser> {
     if (!this.browser?.isConnected()) {
+      this.context = undefined;
+      this.contextPromise = undefined;
       this.browser = await chromium.launch({
         headless: true,
         args: ["--disable-dev-shm-usage"]
       });
     }
     return this.browser;
+  }
+
+  private async getContext(browser: Browser): Promise<BrowserContext> {
+    if (this.context) return this.context;
+    if (!this.contextPromise) {
+      this.contextPromise = this.createContext(browser)
+        .then((context) => {
+          this.context = context;
+          return context;
+        })
+        .finally(() => {
+          this.contextPromise = undefined;
+        });
+    }
+    return this.contextPromise;
   }
 
   private async createContext(browser: Browser): Promise<BrowserContext> {
@@ -138,11 +163,7 @@ export class LinkedInBrowserExtractor {
 
     const context = await browser.newContext({
       ...(storageState ? { storageState } : {}),
-      locale: "en-US",
-      timezoneId: "UTC",
-      viewport: { width: 1440, height: 1200 },
-      userAgent:
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+      viewport: { width: 1440, height: 1200 }
     });
 
     if (!storageState && this.config.LINKEDIN_LI_AT) {

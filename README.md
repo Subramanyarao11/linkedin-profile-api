@@ -196,7 +196,7 @@ Returns process health and whether session material was configured. It never val
 ## How extraction works
 
 1. The input parser accepts only `https://*.linkedin.com/in/{id}` and canonicalizes it to `www.linkedin.com`.
-2. A fresh isolated browser context receives session state from environment variables.
+2. One isolated browser context receives session state from environment variables and remains alive for the process lifetime. Individual requests use fresh pages while LinkedIn cookie rotations remain in the shared context. With `LINKEDIN_STORAGE_STATE_PATH`, a successful non-challenged load also persists rotated state for the next restart.
 3. Playwright loads and scrolls the profile while collecting JSON responses from LinkedIn's first-party `voyager/api` and GraphQL requests. It does not call guessed endpoints or replay hidden requests.
 4. The normalizer detects profile, position, education, skill, certification, language, and vector-image entity shapes. JSON-LD and visible DOM fields fill basic gaps.
 5. Results are cached in memory. A small FIFO semaphore limits concurrent browser contexts for account safety and predictable memory use.
