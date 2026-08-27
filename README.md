@@ -213,6 +213,7 @@ The normalizer is intentionally defensive: unknown entities are ignored, duplica
 | `API_KEYS` | empty | Comma-separated accepted API keys |
 | `LINKEDIN_STORAGE_STATE_JSON` | empty | One-line Playwright storage state |
 | `LINKEDIN_STORAGE_STATE_PATH` | empty | Local path to a Playwright storage-state file |
+| `LINKEDIN_STORAGE_STATE_SEED_PATH` | empty | Read-only seed file used when the writable state path does not exist |
 | `LINKEDIN_LI_AT` | empty | LinkedIn session cookie |
 | `LINKEDIN_JSESSIONID` | empty | Optional LinkedIn CSRF/session cookie |
 | `ALLOW_GUEST_MODE` | `false` | Permit extraction with no session |
@@ -237,14 +238,16 @@ Tests use invented response fixtures and do not contact LinkedIn. `npm run check
 
 ## HTTPS deployment on Render
 
-The included `render.yaml` deploys the Docker image as a web service with HTTPS, a generated API key, health checks, and secrets entered only in Render.
+The included `render.yaml` deploys the Docker image in Render's Singapore region as a paid Starter web service with HTTPS, a generated API key, health checks, and a 1 GB persistent disk. Render services otherwise use an ephemeral filesystem, so the disk preserves LinkedIn's rotated session across restarts. Change the region in the Blueprint before creation if Singapore is not appropriate for your deployment.
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Subramanyarao11/linkedin-profile-api)
 
-1. Click **Deploy to Render**, select at least the Starter plan (Chromium is generally too memory-heavy for small free instances), and create the Blueprint.
-2. In the service's Environment page, set `LINKEDIN_STORAGE_STATE_JSON`, or both LinkedIn cookie variables. Do not put their values in `render.yaml`.
+1. Click **Deploy to Render**, review the paid Starter service and persistent-disk cost, and create the Blueprint.
+2. When prompted, set `LINKEDIN_STORAGE_STATE_JSON` to the one-line output of `jq -c . storage-state.json`. Do not put its value in `render.yaml`.
 3. Copy the generated `API_KEYS` value from the secret manager for API clients.
 4. Call `https://<service-name>.onrender.com/health`, then test `POST /v1/profiles` with `x-api-key`.
+
+On its first valid profile load, the service writes rotated state to `/var/data/storage-state.json`; later restarts prefer that persisted copy over the original JSON seed. As an alternative to the JSON environment variable, upload `storage-state.json` as a Render secret file, set `LINKEDIN_STORAGE_STATE_SEED_PATH=/etc/secrets/storage-state.json`, and leave the JSON value unset.
 
 `autoDeploy` is off to avoid replacing a stable scraper automatically when a dependency or profile shape changes. Deploy reviewed commits manually.
 

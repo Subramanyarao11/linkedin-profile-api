@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import {
   chromium,
   type Browser,
@@ -13,6 +14,40 @@ import { classifyBlockedPage } from "./page-state.js";
 
 const NETWORK_PAYLOAD_LIMIT = 150;
 const NETWORK_BODY_LIMIT_BYTES = 8 * 1024 * 1024;
+
+export function resolveStorageState(config: AppConfig): BrowserContextOptions["storageState"] {
+  if (config.LINKEDIN_STORAGE_STATE_PATH && existsSync(config.LINKEDIN_STORAGE_STATE_PATH)) {
+    return config.LINKEDIN_STORAGE_STATE_PATH;
+  }
+  if (
+    config.LINKEDIN_STORAGE_STATE_SEED_PATH &&
+    existsSync(config.LINKEDIN_STORAGE_STATE_SEED_PATH)
+  ) {
+    return config.LINKEDIN_STORAGE_STATE_SEED_PATH;
+  }
+  if (config.LINKEDIN_STORAGE_STATE_JSON) {
+    try {
+      return JSON.parse(config.LINKEDIN_STORAGE_STATE_JSON) as Exclude<
+        BrowserContextOptions["storageState"],
+        string | undefined
+      >;
+    } catch {
+      throw new ScrapeError(
+        "authentication_required",
+        "LINKEDIN_STORAGE_STATE_JSON is not valid JSON.",
+        503
+      );
+    }
+  }
+  if (config.LINKEDIN_STORAGE_STATE_PATH || config.LINKEDIN_STORAGE_STATE_SEED_PATH) {
+    throw new ScrapeError(
+      "authentication_required",
+      "The configured LinkedIn storage-state file does not exist and no JSON seed was provided.",
+      503
+    );
+  }
+  return undefined;
+}
 
 export class LinkedInBrowserExtractor {
   private browser: Browser | undefined;
@@ -33,7 +68,7 @@ export class LinkedInBrowserExtractor {
     if (!this.config.hasLinkedInSession && !this.config.ALLOW_GUEST_MODE) {
       throw new ScrapeError(
         "authentication_required",
-        "No LinkedIn session is configured. Set LINKEDIN_STORAGE_STATE_PATH, LINKEDIN_STORAGE_STATE_JSON, or LINKEDIN_LI_AT.",
+        "No LinkedIn session is configured. Set LINKEDIN_STORAGE_STATE_PATH, LINKEDIN_STORAGE_STATE_SEED_PATH, LINKEDIN_STORAGE_STATE_JSON, or LINKEDIN_LI_AT.",
         503
       );
     }
@@ -143,23 +178,7 @@ export class LinkedInBrowserExtractor {
   }
 
   private async createContext(browser: Browser): Promise<BrowserContext> {
-    let storageState: BrowserContextOptions["storageState"];
-    if (this.config.LINKEDIN_STORAGE_STATE_JSON) {
-      try {
-        storageState = JSON.parse(this.config.LINKEDIN_STORAGE_STATE_JSON) as Exclude<
-          BrowserContextOptions["storageState"],
-          string | undefined
-        >;
-      } catch {
-        throw new ScrapeError(
-          "authentication_required",
-          "LINKEDIN_STORAGE_STATE_JSON is not valid JSON.",
-          503
-        );
-      }
-    } else if (this.config.LINKEDIN_STORAGE_STATE_PATH) {
-      storageState = this.config.LINKEDIN_STORAGE_STATE_PATH;
-    }
+    const storageState = resolveStorageState(this.config);
 
     const context = await browser.newContext({
       ...(storageState ? { storageState } : {}),

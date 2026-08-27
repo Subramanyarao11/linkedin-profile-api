@@ -15,6 +15,7 @@ const schema = z.object({
   LINKEDIN_JSESSIONID: z.string().optional(),
   LINKEDIN_STORAGE_STATE_JSON: z.string().optional(),
   LINKEDIN_STORAGE_STATE_PATH: z.string().optional(),
+  LINKEDIN_STORAGE_STATE_SEED_PATH: z.string().optional(),
   ALLOW_GUEST_MODE: booleanFromString,
   SCRAPE_TIMEOUT_MS: z.coerce.number().int().min(5000).max(120000).default(45000),
   SCRAPE_CONCURRENCY: z.coerce.number().int().min(1).max(3).default(1),
@@ -39,7 +40,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     ...value,
     apiKeys,
     hasLinkedInSession: Boolean(
-      value.LINKEDIN_STORAGE_STATE_JSON || value.LINKEDIN_STORAGE_STATE_PATH || value.LINKEDIN_LI_AT
+      value.LINKEDIN_STORAGE_STATE_JSON ||
+        value.LINKEDIN_STORAGE_STATE_PATH ||
+        value.LINKEDIN_STORAGE_STATE_SEED_PATH ||
+        value.LINKEDIN_LI_AT
     )
   };
 }

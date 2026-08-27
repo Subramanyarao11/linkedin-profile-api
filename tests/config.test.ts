@@ -28,4 +28,13 @@ describe("loadConfig", () => {
     expect(config.hasLinkedInSession).toBe(true);
     expect(config.LINKEDIN_STORAGE_STATE_PATH).toBe("storage-state.json");
   });
+
+  it("recognizes a read-only secret seed file as a session", () => {
+    const config = loadConfig({
+      NODE_ENV: "development",
+      LINKEDIN_STORAGE_STATE_SEED_PATH: "/etc/secrets/storage-state.json"
+    });
+
+    expect(config.hasLinkedInSession).toBe(true);
+  });
 });
