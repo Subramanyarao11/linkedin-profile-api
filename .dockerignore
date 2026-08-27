@@ -4,7 +4,5 @@ dist
 .github
 .env*
 coverage
-test-results
-playwright-report
 storage-state.json
 *.log

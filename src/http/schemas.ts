@@ -86,7 +86,7 @@ export const profileResponseSchema = {
             fetchedAt: { type: "string", format: "date-time" },
             extractionMode: {
               type: "array",
-              items: { type: "string", enum: ["network", "json-ld", "dom"] }
+              items: { type: "string", enum: ["network", "json-ld", "html", "rsc"] }
             },
             partial: { type: "boolean" }
           }

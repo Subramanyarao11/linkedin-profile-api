@@ -1,11 +1,11 @@
 import { buildApp } from "./app.js";
 import { loadConfig } from "./config.js";
-import { LinkedInBrowserExtractor } from "./extractor/browser.js";
+import { LinkedInHttpExtractor } from "./extractor/linkedin-http.js";
 import { ScrapeService } from "./scrape-service.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
-  const extractor = new LinkedInBrowserExtractor(config);
+  const extractor = new LinkedInHttpExtractor(config);
   const service = new ScrapeService({
     extractor,
     concurrency: config.SCRAPE_CONCURRENCY,
@@ -20,20 +20,10 @@ async function main(): Promise<void> {
     shuttingDown = true;
     app.log.info({ signal }, "Shutting down");
 
-    const closeErrors: unknown[] = [];
     try {
       await app.close();
     } catch (error) {
-      closeErrors.push(error);
-    }
-    try {
-      await extractor.close();
-    } catch (error) {
-      closeErrors.push(error);
-    }
-
-    if (closeErrors.length) {
-      app.log.error({ errors: closeErrors }, "Graceful shutdown failed");
+      app.log.error({ error }, "Graceful shutdown failed");
       process.exitCode = 1;
     }
   };

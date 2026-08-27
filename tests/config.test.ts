@@ -20,7 +20,8 @@ describe("loadConfig", () => {
       NODE_ENV: "production",
       API_ACCESS_MODE: "api-key",
       API_KEYS: " first-key, second-key ",
-      LINKEDIN_LI_AT: "synthetic-session-value"
+      LINKEDIN_LI_AT: "synthetic-session-value",
+      LINKEDIN_JSESSIONID: '"ajax:synthetic"'
     });
 
     expect(config.apiKeys).toEqual(["first-key", "second-key"]);
@@ -32,22 +33,12 @@ describe("loadConfig", () => {
     expect(loadConfig({ INCLUDE_DETAIL_PAGES: "false" }).INCLUDE_DETAIL_PAGES).toBe(false);
   });
 
-  it("recognizes a local Playwright storage-state path as a session", () => {
+  it("does not report a partial cookie configuration as a session", () => {
     const config = loadConfig({
       NODE_ENV: "development",
-      LINKEDIN_STORAGE_STATE_PATH: "storage-state.json"
+      LINKEDIN_LI_AT: "synthetic-session-value"
     });
 
-    expect(config.hasLinkedInSession).toBe(true);
-    expect(config.LINKEDIN_STORAGE_STATE_PATH).toBe("storage-state.json");
-  });
-
-  it("recognizes a read-only secret seed file as a session", () => {
-    const config = loadConfig({
-      NODE_ENV: "development",
-      LINKEDIN_STORAGE_STATE_SEED_PATH: "/etc/secrets/storage-state.json"
-    });
-
-    expect(config.hasLinkedInSession).toBe(true);
+    expect(config.hasLinkedInSession).toBe(false);
   });
 });

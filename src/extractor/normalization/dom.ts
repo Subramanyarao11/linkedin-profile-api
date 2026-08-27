@@ -1,4 +1,4 @@
-import type { DateRange, DomSnapshot, Education, Experience, YearMonth } from "../../types.js";
+import type { DateRange, Education, Experience, PageSnapshot, YearMonth } from "../../types.js";
 import { dedupe } from "./value.js";
 
 const monthNumbers: Record<string, number> = {
@@ -20,13 +20,13 @@ function cleanSectionHeading(value: string): string {
   return value.toLowerCase().replace(/[^a-z]/g, "");
 }
 
-export function domSection(snapshot: DomSnapshot | undefined, heading: string) {
+export function domSection(snapshot: PageSnapshot | undefined, heading: string) {
   return snapshot?.sections
     .filter((section) => cleanSectionHeading(section.heading).includes(heading))
     .sort((left, right) => sectionScore(right) - sectionScore(left))[0];
 }
 
-function sectionScore(section: DomSnapshot["sections"][number]): number {
+function sectionScore(section: PageSnapshot["sections"][number]): number {
   return (section.links?.length ?? 0) * 4 + section.items.length * 3 + section.text.length / 100;
 }
 
@@ -56,7 +56,7 @@ export function domDateRange(value: string | undefined): DateRange | null {
 }
 
 export function profileTopCard(
-  snapshot: DomSnapshot | undefined
+  snapshot: PageSnapshot | undefined
 ): { headline: string | null; location: string | null } {
   if (!snapshot?.name) return { headline: null, location: null };
 
@@ -76,7 +76,7 @@ function isTopCardValue(line: string): boolean {
   return !/followers|followed by/i.test(line);
 }
 
-export function domExperiences(snapshot: DomSnapshot | undefined): Experience[] {
+export function domExperiences(snapshot: PageSnapshot | undefined): Experience[] {
   const section = domSection(snapshot, "experience");
   if (!section?.links) return [];
 
@@ -108,7 +108,7 @@ export function domExperiences(snapshot: DomSnapshot | undefined): Experience[] 
   });
 }
 
-export function domEducations(snapshot: DomSnapshot | undefined): Education[] {
+export function domEducations(snapshot: PageSnapshot | undefined): Education[] {
   const section = domSection(snapshot, "education");
   if (!section?.links) return [];
 
@@ -136,7 +136,7 @@ export function domEducations(snapshot: DomSnapshot | undefined): Education[] {
   });
 }
 
-export function domItems(snapshot: DomSnapshot | undefined, heading: string): string[][] {
+export function domItems(snapshot: PageSnapshot | undefined, heading: string): string[][] {
   const section = domSection(snapshot, heading);
   if (!section) return [];
 

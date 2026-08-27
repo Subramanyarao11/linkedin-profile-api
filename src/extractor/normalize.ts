@@ -1,9 +1,9 @@
 import type {
   Certification,
-  DomSnapshot,
   Education,
   Experience,
   LinkedInProfile,
+  PageSnapshot,
   ScrapeResult
 } from "../types.js";
 import {
@@ -56,7 +56,7 @@ function candidateName(object: AnyRecord): string | null {
 
 function selectProfileCandidate(
   objects: LocatedObject[],
-  snapshot: DomSnapshot | undefined,
+  snapshot: PageSnapshot | undefined,
   publicIdentifier: string
 ): AnyRecord | undefined {
   const candidates = objects
@@ -199,21 +199,18 @@ function appendLanguage(
 
 function extractionModes(
   payloads: unknown[],
-  snapshot: DomSnapshot | undefined
+  snapshot: PageSnapshot | undefined
 ): LinkedInProfile["source"]["extractionMode"] {
   const modes: LinkedInProfile["source"]["extractionMode"] = [];
   if (payloads.length) modes.push("network");
   if (snapshot?.jsonLd.length) modes.push("json-ld");
-  if (snapshot) modes.push("dom");
+  for (const mode of snapshot?.modes ?? []) modes.push(mode);
   return modes;
 }
 
-function profileWarnings(profile: LinkedInProfile, hasNetworkPayloads: boolean): string[] {
+function profileWarnings(profile: LinkedInProfile): string[] {
   const warnings: string[] = [];
   if (!profile.name.full) warnings.push("Profile name could not be extracted.");
-  if (!hasNetworkPayloads) {
-    warnings.push("No LinkedIn JSON responses were captured; the result uses page fallbacks only.");
-  }
   if (!profile.experience.length) warnings.push("No experience entries were available or recognized.");
   if (!profile.education.length) warnings.push("No education entries were available or recognized.");
   if (!profile.skills.length) warnings.push("No skills were available or recognized.");
@@ -226,7 +223,7 @@ function profileWarnings(profile: LinkedInProfile, hasNetworkPayloads: boolean):
 
 export function normalizeProfile(
   payloads: unknown[],
-  snapshot: DomSnapshot | undefined,
+  snapshot: PageSnapshot | undefined,
   profileUrl: string,
   publicIdentifier: string
 ): ScrapeResult {
@@ -317,7 +314,7 @@ export function normalizeProfile(
     }
   };
 
-  const warnings = profileWarnings(profile, payloads.length > 0);
+  const warnings = profileWarnings(profile);
   profile.source.partial = warnings.length > 0;
   return { profile, warnings };
 }

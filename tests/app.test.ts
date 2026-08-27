@@ -6,8 +6,7 @@ import type { ProfileService } from "../src/scrape-service.js";
 const config = loadConfig({
   NODE_ENV: "test",
   API_ACCESS_MODE: "api-key",
-  API_KEYS: "test-secret",
-  ALLOW_GUEST_MODE: "true"
+  API_KEYS: "test-secret"
 });
 
 const fakeService = {
@@ -20,7 +19,7 @@ const fakeService = {
           profileUrl: url,
           publicIdentifier,
           fetchedAt: "2026-01-01T00:00:00.000Z",
-          extractionMode: ["dom" as const],
+          extractionMode: ["html" as const],
           partial: false
         },
         name: { full: "Demo Person", first: "Demo", last: "Person" },

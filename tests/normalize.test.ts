@@ -53,6 +53,7 @@ describe("normalizeProfile", () => {
       location: "Mumbai, India",
       profileImage: "https://media.example.test/photo.jpg",
       backgroundImage: null,
+      modes: ["html"],
       jsonLd: [],
       sections: [{ heading: "About", text: "About Builds useful products.", items: [] }]
     }, "https://www.linkedin.com/in/visible-person/", "visible-person");
@@ -61,7 +62,7 @@ describe("normalizeProfile", () => {
     expect(result.profile.name.first).toBe("Visible");
     expect(result.profile.name.last).toBe("Person");
     expect(result.profile.about).toBe("Builds useful products.");
-    expect(result.profile.source.extractionMode).toEqual(["dom"]);
+    expect(result.profile.source.extractionMode).toEqual(["html"]);
     expect(result.profile.source.partial).toBe(true);
   });
 
@@ -72,6 +73,7 @@ describe("normalizeProfile", () => {
       location: null,
       profileImage: "https://media.example.test/photo.jpg",
       backgroundImage: null,
+      modes: ["html"],
       jsonLd: [],
       sections: [
         {
@@ -158,6 +160,7 @@ describe("normalizeProfile", () => {
       location: null,
       profileImage: null,
       backgroundImage: null,
+      modes: ["html"],
       jsonLd: [],
       sections: [
         { heading: "Skills", text: "Skills TypeScript", items: [["TypeScript"]] },
@@ -202,6 +205,7 @@ describe("normalizeProfile", () => {
       location: "Target location",
       profileImage: null,
       backgroundImage: null,
+      modes: ["html"],
       jsonLd: [],
       sections: []
     }, "https://www.linkedin.com/in/target-person/", "target-person");
@@ -219,6 +223,7 @@ describe("normalizeProfile", () => {
       location: null,
       profileImage: null,
       backgroundImage: null,
+      modes: ["html"],
       jsonLd: [],
       sections: [{
         heading: "Education",

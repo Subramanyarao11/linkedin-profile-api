@@ -52,7 +52,7 @@ export type LinkedInProfile = {
     profileUrl: string;
     publicIdentifier: string;
     fetchedAt: string;
-    extractionMode: Array<"network" | "json-ld" | "dom">;
+    extractionMode: Array<"network" | "json-ld" | "html" | "rsc">;
     partial: boolean;
   };
   name: {
@@ -76,7 +76,8 @@ export type ScrapeResult = {
   warnings: string[];
 };
 
-export type DomSnapshot = {
+export type PageSnapshot = {
+  modes: Array<"html" | "rsc">;
   name: string | null;
   headline: string | null;
   location: string | null;

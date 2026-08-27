@@ -1,95 +1,82 @@
 # LinkedIn Profile API
 
-A production-shaped HTTP API and server-rendered demo interface that accept a LinkedIn `/in/...` profile URL and return the profile fields visible to a LinkedIn session you control as structured JSON.
+A Node.js HTTP API and server-rendered evaluator UI that accept a LinkedIn `/in/...` profile URL and return the profile information visible to a configured LinkedIn account as structured JSON.
 
-The service opens the profile in Chromium, observes the JSON responses used by LinkedIn's own page, normalizes recognizable profile entities, and falls back to JSON-LD/visible DOM data. It does **not** bypass login, profile visibility, CAPTCHA, MFA, checkpoints, or rate limits.
+The extraction runtime is **pure HTTP**. It does not launch, control, or depend on a browser. It directly requests LinkedIn's current server-rendered profile/detail pages and the first-party React Server Component (RSC) endpoint advertised in the profile response.
 
 > [!IMPORTANT]
-> LinkedIn's official APIs do not provide the complete arbitrary-profile access described by this challenge. Automated collection may be restricted by the [LinkedIn User Agreement](https://www.linkedin.com/legal/user-agreement) and local law. Use this project only with accounts, profiles, and purposes you are authorized to access. For consent-based data about the currently signed-in member, prefer LinkedIn's [official developer products](https://learn.microsoft.com/en-us/linkedin/).
+> LinkedIn's official APIs do not provide the complete arbitrary-profile access described by this challenge. Automated collection may be restricted by the [LinkedIn User Agreement](https://www.linkedin.com/legal/user-agreement) and applicable law. Use this project only with accounts, profiles, and purposes you are authorized to access. The service does not bypass login, visibility rules, CAPTCHA, MFA, checkpoints, or rate limits.
 
-## What it returns
+## Assignment coverage
 
-- A zero-friction web form at `/` plus the JSON API and interactive OpenAPI docs
-- Name, headline, location, and about
-- Experience and education with normalized date ranges
-- Skills and endorsement counts when present
-- Certifications and languages
-- Profile/background image URLs when present
-- Source URL, extraction mode, partial-result flag, cache status, and warnings
+- Public-ready HTTPS deployment configuration for Render
+- URL-only evaluator workflow at `/`
+- `POST /v1/profiles` accepts a LinkedIn profile URL
+- Name, headline, location, about, experience, education, skills, certifications, languages, and profile images when LinkedIn returns them
+- Direct authenticated HTTP requests—no Playwright, Selenium, Puppeteer, Chromium, or other browser runtime
+- Validated inputs, bounded concurrency, caching, per-IP rate limiting, consistent errors, OpenAPI docs, tests, and a production Docker image
+- Credentials supplied only through environment secrets
 
-Every field that LinkedIn hides, omits, or no longer includes is returned as `null`/`[]`; it is never guessed.
+Unavailable fields are returned as `null` or `[]`; the API never invents profile data. Sparse successful results include warnings and `source.partial: true`.
 
 ## Quick start
 
-Prerequisites: Node.js 22+, npm, and Chromium for Playwright.
+Prerequisites: Node.js 22+ and npm.
 
 ```bash
 git clone https://github.com/Subramanyarao11/linkedin-profile-api.git
 cd linkedin-profile-api
 npm ci
-npx playwright install chromium
 cp .env.example .env
 ```
 
-The assignment demo is public by default, so callers do not need an API key. To protect a private deployment instead, set `API_ACCESS_MODE=api-key`, generate a key, and place it in `.env`:
-
-```bash
-openssl rand -hex 32
-```
-
-Set `API_KEYS` to that generated value only in API-key mode. Then configure a LinkedIn session using one of the methods below and run:
+Add `LINKEDIN_LI_AT` and `LINKEDIN_JSESSIONID` to `.env`, then run:
 
 ```bash
 npm run dev
 ```
 
-Open `http://localhost:3000/` for the profile form, `http://localhost:3000/docs` for interactive OpenAPI documentation, or `http://localhost:3000/health` for health status.
+Open:
+
+- `http://localhost:3000/` — evaluator form
+- `http://localhost:3000/docs` — interactive OpenAPI documentation
+- `http://localhost:3000/health` — process/session-configuration health
+
+## LinkedIn session configuration
+
+Both cookies are required by the direct HTTP flow:
+
+```dotenv
+LINKEDIN_LI_AT=your_li_at_value
+LINKEDIN_JSESSIONID="ajax:your_value"
+```
+
+To obtain them from a LinkedIn session you own:
+
+1. Sign in to LinkedIn normally.
+2. Open DevTools, then **Application → Storage → Cookies → https://www.linkedin.com**.
+3. Copy the values of `li_at` and `JSESSIONID` into your local `.env` or hosting provider's encrypted secret fields.
+4. Preserve the quotes around `JSESSIONID` if DevTools shows them.
+
+These values are equivalent to credentials. Never paste them into source, logs, issues, screenshots, or Git commits. `.env` and `storage-state.json` are gitignored, but environment secrets are the supported runtime configuration.
+
+The session can expire or be invalidated. Replace the two secrets after signing in manually again; the service intentionally does not automate login or checkpoint recovery.
 
 ## Evaluator workflow
 
-The public assignment deployment asks the evaluator for exactly one value: a LinkedIn profile URL. They can paste it into `/` or call the endpoint directly. LinkedIn credentials remain exclusively in the backend.
+The assignment configuration uses `API_ACCESS_MODE=public`. An evaluator only provides a LinkedIn profile URL through the landing page or API; the backend session remains private.
 
-For private reuse, change `API_ACCESS_MODE` to `api-key`; the same landing form then displays an API-key field and the OpenAPI operation documents the `x-api-key` requirement.
-
-## Configure the LinkedIn session
-
-Session material is equivalent to a password. Use a dedicated, authorized account where appropriate, restrict who can read deployment secrets, rotate it regularly, and never commit it.
-
-### Option A: Playwright storage state (recommended)
-
-Capture a session interactively on your own machine:
+For a non-demo deployment, set `API_ACCESS_MODE=api-key`, generate a secret, and set `API_KEYS` to one or more comma-separated values:
 
 ```bash
-npx playwright codegen --save-storage=storage-state.json https://www.linkedin.com/login
+openssl rand -hex 32
 ```
 
-Sign in in the opened browser and close it after LinkedIn finishes loading. `storage-state.json` is gitignored. For local testing, put its path in `.env`:
-
-```dotenv
-LINKEDIN_STORAGE_STATE_PATH=storage-state.json
-```
-
-For a remote host that cannot mount the file, convert it to one line with `jq -c . storage-state.json` and store the result as the encrypted `LINKEDIN_STORAGE_STATE_JSON` secret.
-
-### Option B: Session cookies
-
-From a LinkedIn browser session you own, supply the `li_at` cookie as `LINKEDIN_LI_AT` and, if available, the `JSESSIONID` cookie as `LINKEDIN_JSESSIONID`. Values belong only in `.env` locally or in your host's encrypted secret manager.
-
-### Guest mode
-
-Set `ALLOW_GUEST_MODE=true` to run without a session. Results will usually be sparse and LinkedIn may show an auth wall. Guest mode is useful for development, not for meeting the full-data requirement.
+Clients then send the selected value as `x-api-key`. Public mode disables caller-requested cache bypass, limiting unnecessary requests to LinkedIn.
 
 ## API
 
 ### `POST /v1/profiles`
-
-Headers:
-
-```text
-content-type: application/json
-```
-
-Add `x-api-key: <one of API_KEYS>` only when `API_ACCESS_MODE=api-key`.
 
 Request:
 
@@ -100,11 +87,7 @@ Request:
 }
 ```
 
-`url` must be an HTTPS LinkedIn `/in/{publicIdentifier}` URL. Host and path validation prevent the browser from being used for SSRF. `refresh: true` bypasses a successful cached result.
-
-For account safety, `refresh` is honored only in API-key mode. Public callers always receive a valid cached result when one exists.
-
-Example:
+The URL must be HTTPS and point to `linkedin.com/in/{publicIdentifier}`. It is canonicalized to `www.linkedin.com`; the strict host and path check prevents arbitrary server-side requests.
 
 ```bash
 curl --request POST 'http://localhost:3000/v1/profiles' \
@@ -112,7 +95,7 @@ curl --request POST 'http://localhost:3000/v1/profiles' \
   --data '{"url":"https://www.linkedin.com/in/satyanadella/"}'
 ```
 
-Successful response (values shortened):
+Example response (values shortened; this documents the schema, not the current profile contents):
 
 ```json
 {
@@ -121,14 +104,10 @@ Successful response (values shortened):
       "profileUrl": "https://www.linkedin.com/in/satyanadella/",
       "publicIdentifier": "satyanadella",
       "fetchedAt": "2026-08-27T07:30:00.000Z",
-      "extractionMode": ["network", "dom"],
-      "partial": false
+      "extractionMode": ["html", "rsc"],
+      "partial": true
     },
-    "name": {
-      "full": "Satya Nadella",
-      "first": "Satya",
-      "last": "Nadella"
-    },
+    "name": { "full": "Satya Nadella", "first": "Satya", "last": "Nadella" },
     "headline": "Chairman and CEO at Microsoft",
     "location": "Redmond, Washington, United States",
     "about": "...",
@@ -139,7 +118,7 @@ Successful response (values shortened):
         "companyLinkedInUrl": "https://www.linkedin.com/company/microsoft/",
         "employmentType": null,
         "location": null,
-        "description": "...",
+        "description": null,
         "dateRange": {
           "start": { "year": 2014, "month": 2 },
           "end": null,
@@ -148,28 +127,28 @@ Successful response (values shortened):
       }
     ],
     "education": [],
-    "skills": [{ "name": "Leadership", "endorsementCount": null }],
+    "skills": [],
     "certifications": [],
-    "languages": [{ "name": "English", "proficiency": null }],
-    "profileImages": {
-      "profile": "https://media.licdn.com/...",
-      "background": null
-    }
+    "languages": [],
+    "profileImages": { "profile": "https://media.licdn.com/...", "background": null }
   },
   "meta": {
     "requestId": "req-1",
-    "durationMs": 2840,
+    "durationMs": 900,
     "cache": "miss",
-    "warnings": []
+    "warnings": [
+      "No education entries were available or recognized.",
+      "No skills were available or recognized.",
+      "No certifications were available or recognized.",
+      "No languages were available or recognized."
+    ]
   }
 }
 ```
 
-This example documents the schema; it is not a claim about the current contents of that profile.
+`refresh: true` bypasses a successful cached result only in API-key mode. Public callers receive a valid cached result when one exists.
 
 ### Errors
-
-All application errors use the same shape:
 
 ```json
 {
@@ -184,7 +163,7 @@ All application errors use the same shape:
 | Status | Typical codes |
 | --- | --- |
 | `400` | `invalid_request`, `invalid_profile_url` |
-| `401` | `unauthorized` (API-key mode only) |
+| `401` | `unauthorized` (API-key mode) |
 | `404` | `profile_not_found` |
 | `429` | `rate_limit_exceeded` |
 | `502` | `profile_unavailable`, `extraction_failed` |
@@ -193,116 +172,99 @@ All application errors use the same shape:
 
 ### `GET /health`
 
-Returns process health and whether session material was configured. It never validates or returns the secret:
+Returns process health and whether both session cookies were configured. It does not validate or expose the values:
 
 ```json
-{
-  "status": "ok",
-  "linkedInSessionConfigured": true
-}
+{ "status": "ok", "linkedInSessionConfigured": true }
 ```
 
-## How extraction works
+## Reverse-engineered extraction approach
 
-1. The input parser accepts only `https://*.linkedin.com/in/{id}` and canonicalizes it to `www.linkedin.com`.
-2. One isolated browser context receives session state from environment variables and remains alive for the process lifetime. Individual requests use fresh pages while LinkedIn cookie rotations remain in the shared context. With `LINKEDIN_STORAGE_STATE_PATH`, a successful non-challenged load also persists rotated state for the next restart.
-3. Playwright loads and scrolls the profile while collecting JSON responses from LinkedIn's first-party `voyager/api` and GraphQL requests. When enabled, it then visits LinkedIn's standard visible experience, education, skills, certifications, and languages detail pages sequentially. It does not replay hidden requests or bypass access controls.
-4. The normalizer detects profile, position, education, skill, certification, language, and vector-image entity shapes. JSON-LD and visible DOM fields fill gaps, and target-identity matching prevents navigation data for the signed-in viewer from overriding the requested profile.
-5. Results are cached in memory. A small FIFO semaphore limits concurrent browser contexts for account safety and predictable memory use.
+1. The input parser accepts only a LinkedIn HTTPS `/in/{id}` URL and produces a fixed canonical origin.
+2. The client sends `li_at`, `JSESSIONID`, and the corresponding CSRF token directly with a `GET` for the profile page. Redirects are not followed, so login/auth-wall/checkpoint responses can be classified safely.
+3. LinkedIn's current profile response contains a `rehydrate-data` React Flight stream. The parser reads the async request metadata for `profileCardsAboveActivity` rather than relying on an obsolete Voyager `profileView` route or hard-coded GraphQL query ID.
+4. The service sends that discovered payload directly to LinkedIn's first-party `/flagship-web/rsc-action/actions/component` endpoint and extracts the rendered About card from its RSC stream.
+5. When enabled, ordinary HTTP `GET` requests load the profile's `details/experience`, `education`, `skills`, `certifications`, and `languages` routes sequentially. Cheerio parses their server-rendered HTML.
+6. The normalizer maps recognizable entries to the stable public schema, collapses duplicates, parses date ranges, and emits warnings for fields LinkedIn omitted or whose current shape was not recognized.
+7. Results are cached in memory, while a FIFO semaphore serializes direct extraction by default.
 
-The normalizer is intentionally defensive: unknown entities are ignored, duplicate entries are collapsed, absent dates remain `null`, and sparse responses include warnings with `source.partial: true`.
+No client-side JavaScript is executed. There is no user-agent impersonation, fingerprint manipulation, timing jitter, challenge solver, or automated sign-in.
 
 ## Configuration
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `PORT` | `3000` | HTTP port assigned by the platform |
+| `PORT` | `3000` | HTTP port |
 | `HOST` | `0.0.0.0` | Bind address |
 | `NODE_ENV` | `development` | Runtime environment |
-| `API_ACCESS_MODE` | `public` | `public` for URL-only access or `api-key` for protected access |
+| `API_ACCESS_MODE` | `public` | URL-only public access or protected `api-key` access |
 | `API_KEYS` | empty | Comma-separated accepted API keys |
-| `LINKEDIN_STORAGE_STATE_JSON` | empty | One-line Playwright storage state |
-| `LINKEDIN_STORAGE_STATE_PATH` | empty | Local path to a Playwright storage-state file |
-| `LINKEDIN_STORAGE_STATE_SEED_PATH` | empty | Read-only seed file used when the writable state path does not exist |
-| `LINKEDIN_LI_AT` | empty | LinkedIn session cookie |
-| `LINKEDIN_JSESSIONID` | empty | Optional LinkedIn CSRF/session cookie |
-| `ALLOW_GUEST_MODE` | `false` | Permit extraction with no session |
-| `INCLUDE_DETAIL_PAGES` | `true` | Visit standard visible detail pages for fuller results |
-| `REQUESTS_PER_MINUTE` | `10` | Per-IP profile-request limit; docs and health are excluded |
-| `SCRAPE_TIMEOUT_MS` | `45000` | Page navigation timeout |
-| `SCRAPE_CONCURRENCY` | `1` | Concurrent browser contexts (max `3`) |
-| `PROFILE_CACHE_TTL_SECONDS` | `900` | Successful-result TTL; `0` disables cache |
+| `LINKEDIN_LI_AT` | empty | Required LinkedIn authenticated-session cookie |
+| `LINKEDIN_JSESSIONID` | empty | Required LinkedIn session/CSRF cookie |
+| `INCLUDE_DETAIL_PAGES` | `true` | Request the five standard detail routes |
+| `REQUESTS_PER_MINUTE` | `10` | Per-IP profile-request limit |
+| `SCRAPE_TIMEOUT_MS` | `45000` | Timeout for each outbound LinkedIn request |
+| `SCRAPE_CONCURRENCY` | `1` | Concurrent extraction workflows (maximum `3`) |
+| `PROFILE_CACHE_TTL_SECONDS` | `900` | Successful-result TTL; `0` disables caching |
 | `MAX_CACHE_ENTRIES` | `250` | In-memory cache bound |
 | `LOG_LEVEL` | `info` | Pino log level |
 
-## Test and build
+## Tests and production build
 
 ```bash
 npm run check
-# Or run only the built-server HTTP checks
-npm run smoke
+npm audit --omit=dev
 docker build -t linkedin-profile-api .
 docker run --rm -p 3000:3000 --env-file .env linkedin-profile-api
 ```
 
-Tests use invented response fixtures and do not contact LinkedIn. `npm run check` type-checks, runs the unit/API suite, builds the production output, and exercises the built HTTP server plus its rate limiter over a real TCP socket. CI runs that complete check, audits production dependencies, and builds the Docker image.
+Tests use synthetic HTML/RSC fixtures and mocked HTTP responses; they do not contact LinkedIn. `npm run check` type-checks, runs the unit/API tests, builds the production output, and exercises the built Fastify service and rate limiter over a real local TCP socket. CI repeats the complete check, production dependency audit, and Docker build.
 
 ## HTTPS deployment on Render
 
-The included `render.yaml` deploys the Docker image in Render's Singapore region as a Free web service with managed HTTPS, URL-only public access, strict per-IP request limits, one-at-a-time extraction, and health checks. Change the region in the Blueprint before creation if Singapore is not appropriate for your deployment.
+The included `render.yaml` defines a Free Docker web service with Render-managed HTTPS, a `/health` check, public URL-only evaluation, a strict request rate, serialized extraction, and manual deploys.
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Subramanyarao11/linkedin-profile-api)
 
-1. Suspend unused Free services if necessary, click **Deploy to Render**, and create the Free Blueprint.
-2. When prompted, set `LINKEDIN_STORAGE_STATE_JSON` to the one-line output of `jq -c . storage-state.json`. Do not put its value in `render.yaml`.
-3. Open `https://<service-name>.onrender.com/`, paste a profile URL, and verify the rendered result.
-4. Call `https://<service-name>.onrender.com/health`, then test the URL-only `POST /v1/profiles` endpoint or `/docs`.
+1. Click **Deploy to Render** and create the Blueprint.
+2. Supply `LINKEDIN_LI_AT` and `LINKEDIN_JSESSIONID` in Render's encrypted secret prompts. Do not add their values to `render.yaml`.
+3. Open `https://<service-name>.onrender.com/`, paste a profile URL, and inspect the structured response.
+4. Verify `/health`, `/docs`, and `POST /v1/profiles`.
 
-Free services have an ephemeral filesystem and spin down when idle, so each new instance starts from the encrypted JSON seed. Cookie changes remain in the shared browser context while that instance is alive, but are lost on restart. If the seed stops authenticating, recapture it locally and replace the Render secret. For a more durable private deployment, upgrade to a paid instance, attach a persistent disk, and point `LINKEDIN_STORAGE_STATE_PATH` at that disk.
-
-Automatic deploys are disabled to avoid replacing a stable scraper when a dependency or profile shape changes. Deploy reviewed commits manually.
-
-The Docker image also runs on Fly.io, Railway, Cloud Run, ECS/Fargate, or any container platform with at least roughly 1 GB RAM, outbound HTTPS, encrypted secrets, and a platform TLS endpoint.
+Free services sleep while idle, so the first request after inactivity can be slow. Automatic deploys are disabled so a reviewed, working extraction version is not replaced unexpectedly. Other container hosts work if they provide outbound HTTPS, encrypted secrets, and TLS termination.
 
 ## Known limitations
 
-- LinkedIn's page response schemas and DOM are undocumented and can change without notice. Fixture tests detect regressions only after a new shape is added.
-- Results depend on what the configured account can see, the profile owner's privacy settings, account locale, experiments, and which sections the page loads. Hidden data is not accessible.
-- Sessions expire and may trigger a checkpoint. The API returns `authentication_required` or `challenge_required`; it intentionally does not solve CAPTCHA/MFA or automate challenge recovery.
-- Standard detail pages add sequential page loads and response time. Set `INCLUDE_DETAIL_PAGES=false` when lower latency is more important than completeness.
-- A Free Render instance can take about a minute to wake after idling and does not preserve rotated session state across restarts.
-- A successful sparse extraction returns HTTP `200` with `source.partial: true` and human-readable `meta.warnings`.
-- Image URLs may be resized, signed, or temporary. Store them only if your use and LinkedIn's terms permit it.
-- The cache is per process. Multiple replicas need a shared cache and distributed concurrency/rate limits before they should share one LinkedIn account.
-- Running a public scraper can expose the backing account to abuse. The assignment configuration disables public cache bypass, limits requests per IP, and serializes extraction; use API-key mode and stronger external quotas for any long-lived deployment.
-- This implementation makes no guarantee of continuous LinkedIn compatibility or suitability for bulk collection.
+- LinkedIn's HTML and RSC formats are private and can change without notice. A format change can require parser maintenance.
+- Results are limited to what the configured account can see and vary with privacy settings, locale, experiments, and the sections a member has populated.
+- Some detail routes may return an empty server-rendered card even when another LinkedIn client surface displays the section; the API reports the result as partial instead of guessing.
+- Session cookies expire and can trigger login or a checkpoint. The API reports this and requires manual session renewal.
+- Each uncached full extraction can make up to seven sequential LinkedIn requests: profile HTML, About RSC, and five detail routes. Disable detail pages or increase cache TTL to reduce traffic.
+- Image URLs can be resized, signed, or temporary.
+- The cache and concurrency control are per process. Multiple replicas need shared coordination before using one backing account.
+- A public endpoint can expose the backing account to abuse. Public mode disables cache bypass and the sample deployment applies low rate limits; use API-key mode and stronger external quotas for a long-lived service.
+- Continuous LinkedIn compatibility and suitability for bulk collection are not guaranteed.
 
 ## Repository structure
 
 ```text
 src/
-  app.ts                    Fastify composition root
-  config.ts                 Validated environment configuration
-  http/
-    api-error.ts            Consistent API error translation
-    api-key.ts              Constant-time API-key guard
-    plugins.ts              Helmet, rate-limit, and OpenAPI setup
-    routes/                 Evaluator, health, and profile routes
-    schemas.ts              JSON/OpenAPI request and response schemas
-  ui.ts                     Server-rendered evaluator interface
+  app.ts                       Fastify composition root
+  config.ts                    Validated environment configuration
+  http/                        Auth, routes, OpenAPI schemas, error mapping
+  ui.ts                        Server-rendered evaluator interface
   extractor/
-    browser.ts              High-level authenticated scrape workflow
-    dom-snapshot.ts         Browser-side DOM snapshot capture
-    network-capture.ts      First-party JSON response collection
-    storage-state.ts        Session-state resolution and browser context
-    normalize.ts            Entity-to-response orchestration
-    normalization/          DOM and payload normalization helpers
-  profile-url.ts            Strict URL canonicalization / SSRF guard
-  scrape-service.ts         Bounded concurrency and cache
-  server.ts                 Runtime construction and graceful shutdown
-tests/                      Synthetic fixtures and unit/API tests
-Dockerfile                  Multi-stage production container
-render.yaml                 Render Blueprint (secrets stay external)
+    linkedin-http.ts           Direct authenticated HTTP workflow
+    html-snapshot.ts           Server-rendered HTML parsing and merging
+    rsc.ts                     React Flight hydration/component parser
+    normalize.ts               Stable response-schema orchestration
+    normalization/             Entity, HTML, dates, images, and value helpers
+  profile-url.ts               Strict URL canonicalization and SSRF guard
+  scrape-service.ts            Bounded concurrency and in-memory cache
+  server.ts                    Runtime construction and graceful shutdown
+tests/                         Synthetic fixtures and unit/integration tests
+Dockerfile                     Multi-stage Node.js production container
+render.yaml                    Render Blueprint; secret values stay external
 ```
 
 ## License

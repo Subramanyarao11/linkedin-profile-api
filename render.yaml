@@ -11,10 +11,10 @@ services:
         value: production
       - key: API_ACCESS_MODE
         value: public
-      - key: LINKEDIN_STORAGE_STATE_JSON
+      - key: LINKEDIN_LI_AT
         sync: false
-      - key: ALLOW_GUEST_MODE
-        value: "false"
+      - key: LINKEDIN_JSESSIONID
+        sync: false
       - key: INCLUDE_DETAIL_PAGES
         value: "true"
       - key: SCRAPE_CONCURRENCY
