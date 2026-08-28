@@ -7,6 +7,7 @@ function configured() {
     NODE_ENV: "test",
     LINKEDIN_LI_AT: "synthetic-li-at",
     LINKEDIN_JSESSIONID: '"ajax:synthetic"',
+    LINKEDIN_ADDITIONAL_COOKIES: "bcookie=synthetic-browser-cookie; lang=v=2&lang=en-us",
     READINESS_KEY: "synthetic-readiness-key"
   });
 }
@@ -15,6 +16,8 @@ describe("LinkedInReadinessProbe", () => {
   it("validates the lightweight member endpoint and caches the result", async () => {
     const request = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
       expect((init?.headers as Record<string, string>).cookie).toContain("li_at=synthetic-li-at");
+      expect((init?.headers as Record<string, string>).cookie)
+        .toContain("bcookie=synthetic-browser-cookie");
       return new Response(JSON.stringify({ data: { $type: "Member" } }), {
         status: 200,
         headers: { "content-type": "application/vnd.linkedin.normalized+json+2.1" }

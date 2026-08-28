@@ -5,10 +5,17 @@ const AUTH_COOKIE_NAMES = new Set(["li_at", "JSESSIONID"]);
 export class LinkedInSession {
   private liAt: string;
   private jsessionId: string;
+  private readonly additionalCookies: string;
 
-  constructor(config: Pick<AppConfig, "LINKEDIN_LI_AT" | "LINKEDIN_JSESSIONID">) {
+  constructor(
+    config: Pick<
+      AppConfig,
+      "LINKEDIN_LI_AT" | "LINKEDIN_JSESSIONID" | "LINKEDIN_ADDITIONAL_COOKIES"
+    >
+  ) {
     this.liAt = config.LINKEDIN_LI_AT?.trim() ?? "";
     this.jsessionId = config.LINKEDIN_JSESSIONID?.trim() ?? "";
+    this.additionalCookies = sanitizeAdditionalCookies(config.LINKEDIN_ADDITIONAL_COOKIES);
   }
 
   get configured(): boolean {
@@ -16,10 +23,16 @@ export class LinkedInSession {
   }
 
   authHeaders(): Record<string, string> {
+    const cookies = [`li_at=${this.liAt}`, `JSESSIONID=${this.jsessionId}`];
+    if (this.additionalCookies) cookies.push(this.additionalCookies);
+
     return {
-      cookie: `li_at=${this.liAt}; JSESSIONID=${this.jsessionId}`,
+      cookie: cookies.join("; "),
       "csrf-token": this.jsessionId.replace(/^"|"$/g, ""),
-      "user-agent": "linkedin-profile-api/1.0"
+      "user-agent":
+        "Mozilla/5.0 (Linux; Android 16; Pixel 9 Build/BP2A.250705.008; wv) " +
+        "AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 " +
+        "Chrome/151.0.0.0 Mobile Safari/537.36"
     };
   }
 
@@ -38,6 +51,18 @@ export class LinkedInSession {
       if (name === "JSESSIONID") this.jsessionId = value;
     }
   }
+}
+
+function sanitizeAdditionalCookies(value: string): string {
+  return value
+    .split(";")
+    .map((part) => part.trim())
+    .filter((part) => {
+      const separator = part.indexOf("=");
+      if (separator < 1) return false;
+      return !AUTH_COOKIE_NAMES.has(part.slice(0, separator).trim());
+    })
+    .join("; ");
 }
 
 function isDeletion(setCookie: string): boolean {

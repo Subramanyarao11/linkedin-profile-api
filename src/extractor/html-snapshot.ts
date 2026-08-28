@@ -1,7 +1,9 @@
-import { load } from "cheerio";
+import { load, type CheerioAPI } from "cheerio";
+import type { AnyNode } from "domhandler";
 import type { PageSnapshot } from "../types.js";
 
 const SECTION_HEADING = /^(about|experience|education|skills|licenses\s*&\s*certifications|certifications|languages)$/i;
+const GENERIC_PROFILE_HEADINGS = /^(profile|report|content credentials|highlights|featured|activity|recommendations|accomplishments|contact|install the linkedin app)$/i;
 
 function cleanText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
@@ -24,15 +26,41 @@ function linkedInPath(href: string | undefined): string | null {
 
 export function parseHtmlSnapshot(html: string): PageSnapshot {
   const $ = load(html);
-  const titleName = cleanText($("title").first().text()).match(/^(.+?)\s*\|\s*LinkedIn$/i)?.[1] ?? null;
-  const visibleName = cleanText($("main h1, main h2").first().text()) || null;
-  const name = titleName || visibleName;
+  const titleCandidate = cleanText($("title").first().text()).match(/^(.+?)\s*\|\s*LinkedIn$/i)?.[1] ?? null;
+  const mobileName = cleanText($("main h1.heading-large").first().text()) || null;
+  const headingCandidates = unique($("main h1, main h2, main h3")
+    .map((_index, element) => $(element).text())
+    .get())
+    .filter((value) =>
+      value.length <= 120 &&
+      !SECTION_HEADING.test(value) &&
+      !GENERIC_PROFILE_HEADINGS.test(value) &&
+      !/^(add|edit|select|verify|share)\b/i.test(value)
+    );
+  const visibleName = mobileName ?? headingCandidates[0] ?? null;
+  const name = titleCandidate && !GENERIC_PROFILE_HEADINGS.test(titleCandidate)
+    ? titleCandidate
+    : visibleName;
   const mainSections = $("main section");
-  const topSection = mainSections.first();
+  const mobileCard = $("main h1.heading-large").first().parent().parent();
+  const topSection = mobileCard.length
+    ? mobileCard.closest("section")
+    : mainSections.first();
   const topParagraphs = unique(topSection.find("p").map((_index, element) => $(element).text()).get());
   const topValues = topParagraphs.filter((line) => isTopCardValue(line, name));
-  const location = topValues.find(isLocation) ?? null;
-  const headline = topValues.find((line) => line !== location) ?? null;
+  const mobileHeadline = cleanText(
+    mobileCard.children("div.body-small.text-color-text").not(".text-color-text-low-emphasis").first().text()
+  ) || null;
+  const mobileLocation = unique(
+    mobileCard.children("div.body-small.text-color-text-low-emphasis")
+      .map((_index, element) => $(element).text())
+      .get()
+      .map((value) => cleanText(value)
+        .replace(/\s+\d[\d,]*\+?\s+(followers|connections).*$/i, "")
+        .trim())
+  ).find(isLocation) ?? null;
+  const location = mobileLocation ?? topValues.find(isLocation) ?? null;
+  const headline = mobileHeadline ?? topValues.find((line) => line !== location) ?? null;
 
   const profileImage = $("main img")
     .filter((_index, element) => {
@@ -41,11 +69,10 @@ export function parseHtmlSnapshot(html: string): PageSnapshot {
       if (/profile-background|background/i.test(`${source} ${alt}`)) return false;
       return source.includes("profile-displayphoto") || Boolean(name && alt.toLowerCase().includes(name.toLowerCase()));
     })
-    .first()
-    .attr("src") ?? null;
+    .first();
   const backgroundImage = $(
-    'main img[alt*="background" i], main img[src*="profile-background"]'
-  ).first().attr("src") ?? null;
+    'main img[alt*="background" i], main img[src*="profile-background"], main img[data-delayed-url*="profile-displaybackgroundimage"]'
+  ).first();
 
   const jsonLd = $('script[type="application/ld+json"]').get().flatMap((element): unknown[] => {
     try {
@@ -60,75 +87,136 @@ export function parseHtmlSnapshot(html: string): PageSnapshot {
     const headings = unique($(section).find("h1, h2, h3").map((_index, element) => $(element).text()).get());
     const paragraphs = unique($(section).find("p").map((_index, element) => $(element).text()).get());
     const lines = unique([...headings, ...paragraphs]);
-    const heading =
-      [...headings, ...paragraphs].find((line) => SECTION_HEADING.test(cleanText(line))) ??
-      headings[0] ??
+    const heading = headings[0] ??
+      paragraphs.find((line) => SECTION_HEADING.test(cleanText(line))) ??
       paragraphs[0] ??
       "";
     const items = $(section).find("li").get().map((item) => {
+      const mobileLines = mobileEntityLines($, item);
       const itemParagraphs = unique($(item).find("p").map((_index, element) => $(element).text()).get());
-      return itemParagraphs.length ? itemParagraphs : [cleanText($(item).text())].filter(Boolean);
+      return mobileLines.length > 1
+        ? mobileLines
+        : itemParagraphs.length
+          ? itemParagraphs
+          : [cleanText($(item).text())].filter(Boolean);
     });
-    const links = $(section).find("a").get().map((anchor) => {
+    const genericLinks = $(section).find("a").get().map((anchor) => {
+      const mobileLines = mobileEntityLines($, anchor);
       const anchorParagraphs = unique($(anchor).find("p").map((_index, element) => $(element).text()).get());
       return {
-        text: anchorParagraphs.length ? anchorParagraphs : [cleanText($(anchor).text())].filter(Boolean),
+        text: mobileLines.length > 1
+          ? mobileLines
+          : anchorParagraphs.length
+            ? anchorParagraphs
+            : [cleanText($(anchor).text())].filter(Boolean),
         path: linkedInPath($(anchor).attr("href"))
       };
     });
+    const experienceLinks = /^experience$/i.test(cleanText(heading))
+      ? mobileExperienceLinks($, section)
+      : [];
 
     return {
       heading: cleanText(heading),
-      text: lines.join(" "),
+      text: cleanText($(section).text()) || lines.join(" "),
       items,
       lines,
-      links
+      links: experienceLinks.length ? experienceLinks : genericLinks
     };
   }).filter((section) => section.heading || section.text);
+
+  const detailSections = $("main .detail-container").get().flatMap((container) => {
+    const heading = cleanText($(container).children("h1, h2, h3, h4").first().text());
+    if (!SECTION_HEADING.test(heading)) return [];
+
+    const items = $(container).find("li").get().map((item) => {
+      const values = mobileEntityLines($, item);
+      return values.length ? values : [cleanText($(item).text())].filter(Boolean);
+    });
+    return [{
+      heading,
+      text: cleanText($(container).text()),
+      items,
+      lines: [heading],
+      links: []
+    }];
+  });
 
   return {
     modes: ["html"],
     name,
     headline,
     location,
-    profileImage,
-    backgroundImage,
+    profileImage: imageUrl(profileImage.attr("src"), profileImage.attr("data-delayed-url")),
+    backgroundImage: imageUrl(backgroundImage.attr("src"), backgroundImage.attr("data-delayed-url")),
     jsonLd,
-    sections
+    sections: [...sections, ...detailSections]
   };
 }
 
-export function mergePageSnapshots(
-  primary: PageSnapshot,
-  details: PageSnapshot[]
-): PageSnapshot {
-  const snapshots = [primary, ...details];
-  return {
-    ...primary,
-    modes: unique(snapshots.flatMap((snapshot) => snapshot.modes)) as PageSnapshot["modes"],
-    jsonLd: snapshots.flatMap((snapshot) => snapshot.jsonLd),
-    sections: snapshots.flatMap((snapshot) => snapshot.sections)
-  };
+function imageUrl(source: string | undefined, delayedSource: string | undefined): string | null {
+  return source ?? delayedSource ?? null;
 }
 
-export function appendRscAbout(snapshot: PageSnapshot, values: string[]): PageSnapshot {
-  const text = unique(values.filter((value) => !/^about$/i.test(value)));
-  if (!text.length) return snapshot;
+function mobileEntityLines($: CheerioAPI, element: AnyNode): string[] {
+  const root = $(element);
+  const heading = root.find(".list-item-heading").first();
+  if (!heading.length) return [];
 
-  return {
-    ...snapshot,
-    modes: unique([...snapshot.modes, "rsc"]) as PageSnapshot["modes"],
-    sections: [
-      ...snapshot.sections,
-      {
-        heading: "About",
-        text: `About ${text.join(" ")}`,
-        items: [],
-        lines: ["About", ...text],
-        links: []
-      }
-    ]
-  };
+  const container = heading.parent();
+  const values: string[] = [cleanText(heading.text())];
+  container.children("div").each((_index, child) => {
+    if ($(child).find(".list-item-heading").length || $(child).hasClass("list-item-heading")) return;
+    const description = cleanText($(child).find(".description").first().text());
+    const spanValues = unique($(child).find("span").map((_spanIndex, span) => $(span).text()).get());
+    const clone = $(child).clone();
+    clone.find("button, svg, li-icon").remove();
+    const value = description || (spanValues.length ? spanValues.join(" ") : cleanText(clone.text()));
+    if (value) values.push(value);
+  });
+  return unique(values);
+}
+
+function mobileExperienceLinks(
+  $: CheerioAPI,
+  section: AnyNode
+): Array<{ text: string[]; path: string | null }> {
+  const values: Array<{ text: string[]; path: string | null }> = [];
+  const outerItems = $(section).find("li.profile-entity-lockup").filter((_index, item) =>
+    $(item).parents("li.profile-entity-lockup").length === 0
+  );
+
+  outerItems.each((_index, item) => {
+    const root = $(item);
+    const roles = root.find("li.role-container");
+    if (roles.length) {
+      const companyAnchor = root.find("a").filter((_anchorIndex, anchor) =>
+        $(anchor).parents("li.role-container").length === 0
+      ).first();
+      const company = cleanText(companyAnchor.find(".list-item-heading").first().text()) ||
+        cleanText(companyAnchor.text());
+      const path = linkedInPath(companyAnchor.attr("href"));
+
+      roles.each((_roleIndex, role) => {
+        const roleRoot = $(role);
+        const title = cleanText(roleRoot.find(".body-small-bold").first().text());
+        const dates = cleanText(roleRoot.find("div.body-small.text-color-text").first().text());
+        const location = cleanText(roleRoot.find(".text-xs.text-color-text-low-emphasis").first().text());
+        const description = cleanText(roleRoot.find(".description").first().text());
+        const text = unique([title, company, dates, location, description]);
+        if (text.length >= 3) values.push({ text, path });
+      });
+      return;
+    }
+
+    const anchor = root.find("a").filter((_anchorIndex, candidate) =>
+      $(candidate).find(".list-item-heading").length > 0
+    ).first();
+    const text = mobileEntityLines($, anchor.get(0) ?? item);
+    if (text.length >= 3) values.push({ text, path: linkedInPath(anchor.attr("href")) });
+  });
+
+  return values;
 }
 
 function isTopCardValue(line: string, name: string | null): boolean {

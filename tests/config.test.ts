@@ -28,10 +28,6 @@ describe("loadConfig", () => {
     expect(config.hasLinkedInSession).toBe(true);
   });
 
-  it("enables visible detail pages by default", () => {
-    expect(loadConfig({}).INCLUDE_DETAIL_PAGES).toBe(true);
-    expect(loadConfig({ INCLUDE_DETAIL_PAGES: "false" }).INCLUDE_DETAIL_PAGES).toBe(false);
-  });
 
   it("does not report a partial cookie configuration as a session", () => {
     const config = loadConfig({

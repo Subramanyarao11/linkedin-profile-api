@@ -15,6 +15,8 @@ services:
         sync: false
       - key: LINKEDIN_JSESSIONID
         sync: false
+      - key: LINKEDIN_ADDITIONAL_COOKIES
+        sync: false
       - key: READINESS_KEY
         sync: false
       - key: READINESS_CACHE_TTL_SECONDS
@@ -37,8 +39,6 @@ services:
         value: "3600"
       - key: SERVICE_PUBLIC_URL
         sync: false
-      - key: INCLUDE_DETAIL_PAGES
-        value: "true"
       - key: SCRAPE_CONCURRENCY
         value: "1"
       - key: REQUESTS_PER_MINUTE

@@ -44,7 +44,12 @@ function domYearMonth(value: string): YearMonth | null {
 export function domDateRange(value: string | undefined): DateRange | null {
   if (!value) return null;
 
-  const dates = value.split("·")[0]?.trim().split(/\s+[-–—]\s+/);
+  const normalized = value.trim();
+  const boundedRange = normalized.match(
+    /^((?:[A-Za-z]{3,9}\s+)?\d{4}\s+[-–—]\s+(?:present|current|(?:[A-Za-z]{3,9}\s+)?\d{4}))/i
+  )?.[1];
+  const dates = (boundedRange ?? normalized.split("·")[0]?.trim() ?? normalized)
+    .split(/\s+[-–—]\s+/);
   if (!dates?.length || dates.length > 2) return null;
 
   const start = domYearMonth(dates[0] ?? "");
@@ -81,9 +86,7 @@ export function domExperiences(snapshot: PageSnapshot | undefined): Experience[]
   if (!section?.links) return [];
 
   return section.links.flatMap((link): Experience[] => {
-    if (!link.path || !/^\/(company|school)\//.test(link.path) || link.text.length < 3) {
-      return [];
-    }
+    if (link.text.length < 3) return [];
 
     const [title, company, dates, ...remaining] = link.text;
     if (!title || !company || !dates) return [];
@@ -98,7 +101,9 @@ export function domExperiences(snapshot: PageSnapshot | undefined): Experience[]
       {
         title,
         company,
-        companyLinkedInUrl: `https://www.linkedin.com${link.path}`,
+        companyLinkedInUrl: link.path && /^\/(company|school)\//.test(link.path)
+          ? `https://www.linkedin.com${link.path}`
+          : null,
         employmentType: null,
         location,
         description: remaining.length ? remaining.join("\n") : null,
@@ -113,22 +118,28 @@ export function domEducations(snapshot: PageSnapshot | undefined): Education[] {
   if (!section?.links) return [];
 
   return section.links.flatMap((link): Education[] => {
-    if (!link.path?.startsWith("/school/") || !link.text[0]) return [];
+    if (!link.text[0]) return [];
 
     const [school, ...details] = link.text;
     const dateIndex = details.findIndex((line) => domDateRange(line) !== null);
     const dates = dateIndex >= 0 ? details[dateIndex] : undefined;
-    const degreeLine = details.find((_line, index) => index !== dateIndex);
-    const remaining = details.filter((line, index) => index !== dateIndex && line !== degreeLine);
+    const beforeDate = details.filter((_line, index) => dateIndex < 0 || index < dateIndex);
+    const degreeLine = beforeDate[0];
     const degreeParts = degreeLine?.split(",").map((part) => part.trim()).filter(Boolean) ?? [];
+    const explicitField = degreeParts.length === 1 ? beforeDate[1] : undefined;
+    const activities = details.find((line) => /^activities and societies:/i.test(line));
+    const used = new Set([degreeLine, explicitField, dates, activities].filter(Boolean));
+    const remaining = details.filter((line) => !used.has(line));
 
     return [
       {
         school,
-        schoolLinkedInUrl: `https://www.linkedin.com${link.path}`,
+        schoolLinkedInUrl: link.path?.startsWith("/school/")
+          ? `https://www.linkedin.com${link.path}`
+          : null,
         degree: degreeParts[0] ?? null,
-        fieldOfStudy: degreeParts.slice(1).join(", ") || null,
-        activities: null,
+        fieldOfStudy: degreeParts.slice(1).join(", ") || explicitField || null,
+        activities: activities?.replace(/^activities and societies:\s*/i, "") ?? null,
         description: remaining.length ? remaining.join("\n") : null,
         dateRange: domDateRange(dates)
       }

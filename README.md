@@ -2,7 +2,9 @@
 
 A Node.js HTTP API and server-rendered evaluator UI that accept a LinkedIn `/in/...` profile URL and return the profile information visible to a configured LinkedIn account as structured JSON.
 
-The extraction runtime is **pure HTTP**. It does not launch, control, or depend on a browser. It directly requests LinkedIn's current server-rendered profile/detail pages and the first-party React Server Component (RSC) endpoint advertised in the profile response.
+The extraction runtime is **pure HTTP**. It does not launch, control, or depend on a browser. It sends one authenticated request to LinkedIn's current mobile-web profile endpoint and parses the server-rendered response.
+
+Live evaluator: **https://linkedin-profile-api-eyyc.onrender.com**
 
 > [!IMPORTANT]
 > LinkedIn's official APIs do not provide the complete arbitrary-profile access described by this challenge. Automated collection may be restricted by the [LinkedIn User Agreement](https://www.linkedin.com/legal/user-agreement) and applicable law. Use this project only with accounts, profiles, and purposes you are authorized to access. The service does not bypass login, visibility rules, CAPTCHA, MFA, checkpoints, or rate limits.
@@ -31,7 +33,7 @@ npm ci
 cp .env.example .env
 ```
 
-Add `LINKEDIN_LI_AT` and `LINKEDIN_JSESSIONID` to `.env`, then run:
+Add the LinkedIn session variables described below to `.env`, then run:
 
 ```bash
 npm run dev
@@ -45,11 +47,12 @@ Open:
 
 ## LinkedIn session configuration
 
-Both cookies are required by the direct HTTP flow:
+`li_at` and `JSESSIONID` authenticate the account. LinkedIn's current mobile-web profile endpoint also expects the first-party device cookies that accompany that session:
 
 ```dotenv
 LINKEDIN_LI_AT=your_li_at_value
 LINKEDIN_JSESSIONID="ajax:your_value"
+LINKEDIN_ADDITIONAL_COOKIES=liap=true; bcookie=...; bscookie=...; lang=...; lidc=...; timezone=...; li_theme=...; li_theme_set=...
 READINESS_KEY=a_separate_random_monitoring_key
 ```
 
@@ -57,12 +60,13 @@ To obtain them from a LinkedIn session you own:
 
 1. Sign in to LinkedIn normally.
 2. Open DevTools, then **Application → Storage → Cookies → https://www.linkedin.com**.
-3. Copy the values of `li_at` and `JSESSIONID` into your local `.env` or hosting provider's encrypted secret fields.
-4. Preserve the quotes around `JSESSIONID` if DevTools shows them.
+3. Copy `li_at` and `JSESSIONID` into their dedicated secret fields.
+4. Copy the available `liap`, `bcookie`, `bscookie`, `lang`, `lidc`, `timezone`, `li_theme`, and `li_theme_set` pairs into `LINKEDIN_ADDITIONAL_COOKIES`, separated by semicolons.
+5. Preserve the quotes around `JSESSIONID` if DevTools shows them.
 
 These values are equivalent to credentials. Never paste them into source, logs, issues, screenshots, or Git commits. `.env` and `storage-state.json` are gitignored, but environment secrets are the supported runtime configuration.
 
-The session can expire or be invalidated. Replace the two secrets after signing in manually again; the service intentionally does not automate login or checkpoint recovery.
+The session can expire or be invalidated. Replace the LinkedIn session secrets after signing in manually again; the service intentionally does not automate login or checkpoint recovery.
 
 The direct client honors a new `li_at` or `JSESSIONID` if LinkedIn legitimately rotates either through a `Set-Cookie` response while the process remains alive. This can preserve normal server-directed rotation, but it cannot renew an expired login and in-memory rotations do not survive a Render restart.
 
@@ -108,7 +112,7 @@ Example response (values shortened; this documents the schema, not the current p
       "profileUrl": "https://www.linkedin.com/in/satyanadella/",
       "publicIdentifier": "satyanadella",
       "fetchedAt": "2026-08-27T07:30:00.000Z",
-      "extractionMode": ["html", "rsc"],
+      "extractionMode": ["html"],
       "partial": true
     },
     "name": { "full": "Satya Nadella", "first": "Satya", "last": "Nadella" },
@@ -220,19 +224,18 @@ When SMTP alerting is configured, either a failed readiness check or a recruiter
 
 Not after the web session has expired. LinkedIn's supported refresh-token endpoint applies to OAuth access tokens for approved products/partners; it does not refresh `li_at`/`JSESSIONID` web cookies or grant the arbitrary-profile visibility required by this assignment. OpenID Connect similarly returns lite information about the consenting signed-in member, not arbitrary profiles. See LinkedIn's official [OAuth refresh-token documentation](https://learn.microsoft.com/en-us/linkedin/shared/authentication/programmatic-refresh-tokens) and [OpenID Connect documentation](https://learn.microsoft.com/en-us/linkedin/consumer/integrations/self-serve/sign-in-with-linkedin-v2).
 
-Automating the username/password login flow would introduce credential storage, checkpoints/MFA, and challenge-bypass risk, and would conflict with this project's no-browser, no-login-automation boundary. When readiness reports expiry, sign in normally and replace the two encrypted deployment secrets.
+Automating the username/password login flow would introduce credential storage, checkpoints/MFA, and challenge-bypass risk, and would conflict with this project's no-browser, no-login-automation boundary. When readiness reports expiry, sign in normally and replace the encrypted LinkedIn session secrets.
 
 ## Reverse-engineered extraction approach
 
 1. The input parser accepts only a LinkedIn HTTPS `/in/{id}` URL and produces a fixed canonical origin.
-2. The client sends `li_at`, `JSESSIONID`, and the corresponding CSRF token directly with a `GET` for the profile page. Redirects are not followed, so login/auth-wall/checkpoint responses can be classified safely.
-3. LinkedIn's current profile response contains a `rehydrate-data` React Flight stream. The parser reads the async request metadata for `profileCardsAboveActivity` rather than relying on an obsolete Voyager `profileView` route or hard-coded GraphQL query ID.
-4. The service sends that discovered payload directly to LinkedIn's first-party `/flagship-web/rsc-action/actions/component` endpoint and extracts the rendered About card from its RSC stream.
-5. When enabled, ordinary HTTP `GET` requests load the profile's `details/experience`, `education`, `skills`, `certifications`, and `languages` routes sequentially. Cheerio parses their server-rendered HTML.
-6. The normalizer maps recognizable entries to the stable public schema, collapses duplicates, parses date ranges, and emits warnings for fields LinkedIn omitted or whose current shape was not recognized.
-7. Results are cached in memory, while a FIFO semaphore serializes direct extraction by default.
+2. The client sends the authenticated cookie set and corresponding CSRF token directly to `/mwlite/profile/in/{publicIdentifier}`. Redirects are not followed, so login, auth-wall, and checkpoint responses can be classified safely.
+3. That endpoint returns the top card, About, Experience, Education, Skills, Certifications, Languages, and image references as server-rendered mobile HTML in one response.
+4. Cheerio extracts mobile entity lockups, grouped experience roles, accomplishment subsections, delayed image URLs, and the visible top card without executing client-side JavaScript.
+5. The normalizer maps recognizable entries to the stable public schema, collapses duplicates, parses date ranges, and emits warnings for fields LinkedIn omitted or whose current shape was not recognized.
+6. Results are cached in memory, while a FIFO semaphore serializes direct extraction by default.
 
-No client-side JavaScript is executed. There is no user-agent impersonation, fingerprint manipulation, timing jitter, challenge solver, or automated sign-in.
+No client-side JavaScript is executed. Headers identify the mobile-web surface being requested; there is no runtime fingerprint manipulation, timing jitter, challenge solver, or automated sign-in.
 
 ## Configuration
 
@@ -245,6 +248,7 @@ No client-side JavaScript is executed. There is no user-agent impersonation, fin
 | `API_KEYS` | empty | Comma-separated accepted API keys |
 | `LINKEDIN_LI_AT` | empty | Required LinkedIn authenticated-session cookie |
 | `LINKEDIN_JSESSIONID` | empty | Required LinkedIn session/CSRF cookie |
+| `LINKEDIN_ADDITIONAL_COOKIES` | empty | Semicolon-separated first-party device cookies required by the mobile profile surface |
 | `READINESS_KEY` | empty | Secret header value protecting active `/ready` checks |
 | `READINESS_CACHE_TTL_SECONDS` | `300` | Cache lifetime for active session-check results |
 | `READINESS_TIMEOUT_MS` | `5000` | Timeout for the lightweight session check |
@@ -257,7 +261,6 @@ No client-side JavaScript is executed. There is no user-agent impersonation, fin
 | `SESSION_ALERT_EMAIL_TO` | empty | Destination for session-expiry alerts |
 | `SESSION_ALERT_COOLDOWN_SECONDS` | `3600` | Minimum interval between duplicate alert emails |
 | `SERVICE_PUBLIC_URL` | empty | Public deployment URL included in recovery emails |
-| `INCLUDE_DETAIL_PAGES` | `true` | Request the five standard detail routes |
 | `REQUESTS_PER_MINUTE` | `10` | Per-IP profile-request limit |
 | `SCRAPE_TIMEOUT_MS` | `45000` | Timeout for each outbound LinkedIn request |
 | `SCRAPE_CONCURRENCY` | `1` | Concurrent extraction workflows (maximum `3`) |
@@ -274,7 +277,7 @@ docker build -t linkedin-profile-api .
 docker run --rm -p 3000:3000 --env-file .env linkedin-profile-api
 ```
 
-Tests use synthetic HTML/RSC fixtures and mocked HTTP responses; they do not contact LinkedIn. `npm run check` type-checks, runs the unit/API tests, builds the production output, and exercises the built Fastify service and rate limiter over a real local TCP socket. CI repeats the complete check, production dependency audit, and Docker build.
+Automated tests use synthetic fixtures and mocked HTTP responses; they do not contact LinkedIn. `npm run check` type-checks, runs the unit/API tests, builds the production output, and exercises the built Fastify service and rate limiter over a real local TCP socket. CI repeats the complete check, production dependency audit, and Docker build.
 
 ## HTTPS deployment on Render
 
@@ -283,7 +286,7 @@ The included `render.yaml` defines a Free Docker web service with Render-managed
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Subramanyarao11/linkedin-profile-api)
 
 1. Click **Deploy to Render** and create the Blueprint.
-2. Supply `LINKEDIN_LI_AT`, `LINKEDIN_JSESSIONID`, and a separately generated `READINESS_KEY` in Render's encrypted secret prompts. Do not add their values to `render.yaml`.
+2. Supply `LINKEDIN_LI_AT`, `LINKEDIN_JSESSIONID`, `LINKEDIN_ADDITIONAL_COOKIES`, and a separately generated `READINESS_KEY` in Render's encrypted secret prompts. Do not add their values to `render.yaml`.
 3. To enable immediate email alerts, set `SMTP_USER`, `SMTP_PASS`, `SESSION_ALERT_EMAIL_TO`, and `SERVICE_PUBLIC_URL`. With Gmail, use a Google App Password rather than the account's normal password; the Blueprint already selects `smtp.gmail.com`, port `465`, and TLS.
 4. Open `https://<service-name>.onrender.com/`, paste a profile URL, and inspect the structured response.
 5. Verify `/health`, `/ready`, `/docs`, and `POST /v1/profiles`.
@@ -305,13 +308,13 @@ Free services sleep while idle, so the first request after inactivity can be slo
 
 ## Known limitations
 
-- LinkedIn's HTML and RSC formats are private and can change without notice. A format change can require parser maintenance.
+- LinkedIn's mobile HTML format is private and can change without notice. A format change can require parser maintenance.
 - Results are limited to what the configured account can see and vary with privacy settings, locale, experiments, and the sections a member has populated.
-- Some detail routes may return an empty server-rendered card even when another LinkedIn client surface displays the section; the API reports the result as partial instead of guessing.
+- Unpopulated, hidden, or unrecognized sections are returned as empty arrays and reported through warnings instead of being guessed.
 - Session cookies expire and can trigger login or a checkpoint. The API reports this and requires manual session renewal.
 - Server-issued auth-cookie rotations are retained only in memory; Render restarts return to the encrypted values configured in the service.
 - Email alerts are best-effort and depend on the configured SMTP provider; one-hour deduplication prevents a broken public session from generating an email storm.
-- Each uncached full extraction can make up to seven sequential LinkedIn requests: profile HTML, About RSC, and five detail routes. Disable detail pages or increase cache TTL to reduce traffic.
+- Each uncached extraction makes one LinkedIn mobile-profile request; readiness monitoring uses a separate lightweight member request.
 - Image URLs can be resized, signed, or temporary.
 - The cache and concurrency control are per process. Multiple replicas need shared coordination before using one backing account.
 - A public endpoint can expose the backing account to abuse. Public mode disables cache bypass and the sample deployment applies low rate limits; use API-key mode and stronger external quotas for a long-lived service.
@@ -328,7 +331,6 @@ src/
   extractor/
     linkedin-http.ts           Direct authenticated HTTP workflow
     html-snapshot.ts           Server-rendered HTML parsing and merging
-    rsc.ts                     React Flight hydration/component parser
     normalize.ts               Stable response-schema orchestration
     normalization/             Entity, HTML, dates, images, and value helpers
   linkedin-session.ts          Shared cookie state and safe response rotation
